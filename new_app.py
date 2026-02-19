@@ -1,5 +1,6 @@
 import os
 import textwrap
+import traceback
 from pathlib import Path
 
 os.makedirs("/tmp/mplconfig", exist_ok=True)
@@ -1575,13 +1576,25 @@ with st.sidebar:
 
 main_view = st.radio(
     "View",
-    options=["SR", "Activity", "Handoffs & History SR"],
+    options=["Home", "SR", "Activity", "Handoffs & History SR"],
     horizontal=True,
+    index=0,
     key="main_view",
 )
-if main_view == "SR":
-    render_sr_tab(sr_path, start_year, clip_q)
-elif main_view == "Activity":
-    render_activity_tab(activity_path)
+load_data = st.toggle("Load data", value=False, help="Enable to load parquet files for the selected view.")
+
+if main_view == "Home":
+    st.info("Select a view and enable `Load data` to start loading files.")
+elif not load_data:
+    st.warning("Data loading is disabled. Enable `Load data` to run this view.")
 else:
-    render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
+    try:
+        if main_view == "SR":
+            render_sr_tab(sr_path, start_year, clip_q)
+        elif main_view == "Activity":
+            render_activity_tab(activity_path)
+        else:
+            render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
+    except Exception as exc:
+        st.error(f"Runtime error in `{main_view}`: {exc}")
+        st.code(traceback.format_exc())
