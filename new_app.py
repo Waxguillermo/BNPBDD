@@ -1607,10 +1607,15 @@ with st.sidebar:
         value="https://drive.google.com/file/d/1FumhWE4zTzOBLzS2U8pABB3JZZOlR52z/view?usp=drive_link",
     )
 
-tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
-with tab_sr:
+main_view = st.radio(
+    "View",
+    options=["SR", "Activity", "Handoffs & History SR"],
+    horizontal=True,
+    key="main_view",
+)
+if main_view == "SR":
     render_sr_tab(sr_path, start_year, clip_q)
-with tab_activity:
+elif main_view == "Activity":
     render_activity_tab(activity_path)
-with tab_handoff_history:
+else:
     render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
