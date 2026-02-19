@@ -18,6 +18,10 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
+if os.getenv("HOME") == "/home/adminuser":
+    st.error("Cloud safety mode: data loading disabled temporarily.")
+    st.stop()
+
 _BNP_PRIMARY = "#167a5f"
 _BNP_DARK = "#0f5b46"
 _BNP_MID = "#2f8f74"
