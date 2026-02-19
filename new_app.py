@@ -142,7 +142,32 @@ def normalize_data_source(path: str) -> str:
     if not file_id:
         return raw
 
-    return f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+    return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+
+def extract_drive_file_id(path: str) -> str | None:
+    raw = str(path).strip()
+    if "drive.google.com" not in raw:
+        return None
+
+    parsed = urlparse(raw)
+    match = re.search(r"/file/d/([^/]+)", parsed.path)
+    if match:
+        return match.group(1)
+
+    query = parse_qs(parsed.query)
+    return query.get("id", [None])[0]
+
+
+def drive_download_candidates(path: str) -> list[str]:
+    file_id = extract_drive_file_id(path)
+    if not file_id:
+        return [normalize_data_source(path)]
+
+    return [
+        f"https://drive.google.com/uc?export=download&id={file_id}",
+        f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
+    ]
 
 
 def localize_data_source(path: str, suffix: str = "") -> str:
@@ -159,12 +184,23 @@ def localize_data_source(path: str, suffix: str = "") -> str:
     if local_path.exists() and local_path.stat().st_size > 0:
         return str(local_path)
 
-    with requests.get(src, stream=True, timeout=300) as resp:
-        resp.raise_for_status()
-        with local_path.open("wb") as fh:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    fh.write(chunk)
+    last_error: Exception | None = None
+    for candidate in drive_download_candidates(path):
+        try:
+            with requests.get(candidate, stream=True, timeout=300) as resp:
+                resp.raise_for_status()
+                with local_path.open("wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            fh.write(chunk)
+            return str(local_path)
+        except Exception as exc:
+            last_error = exc
+            if local_path.exists():
+                local_path.unlink(missing_ok=True)
+
+    if last_error is not None:
+        raise last_error
     return str(local_path)
 
 
