@@ -16,6 +16,5 @@ __pycache__/
 .idea/
 
 # Data files (too large for GitHub)
-*.parquet
 
 
