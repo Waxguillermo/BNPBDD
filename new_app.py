@@ -27,8 +27,8 @@ _COLOR_B = _BNP_MID
 _TEMPLATE = "bnp_white"
 _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
 _IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
-_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
-_CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "1200000"))
+_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "30000"))
+_CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "150000"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -1135,9 +1135,9 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         if c in df_f.columns
     ]
     if show_cols:
-        st.dataframe(df_f[show_cols].head(500))
+        st.dataframe(df_f[show_cols].head(100 if _IS_STREAMLIT_CLOUD else 500))
     else:
-        st.dataframe(df_f.head(500))
+        st.dataframe(df_f.head(100 if _IS_STREAMLIT_CLOUD else 500))
 
 
 def render_activity_tab(path: str):
@@ -1337,6 +1337,11 @@ def render_handoffs_history_tab(
     sr_enriched_path: str,
 ):
     st.subheader("Handoffs & History SR")
+    if _IS_STREAMLIT_CLOUD:
+        st.info(
+            "Cloud safe mode: this view is loaded with reduced volume and History SR deep aggregation is disabled "
+            "to avoid memory crashes."
+        )
     
 
     try:
@@ -1366,15 +1371,26 @@ def render_handoffs_history_tab(
         st.error(handoff_error)
         return
 
-    try:
-        with st.spinner("Computing History SR aggregates..."):
-            fields_df, actions_df, weekly_df, reopen_df, hist_metrics = history_summary(history_sr_path)
-    except FileNotFoundError:
-        st.error(f"File not found: `{history_sr_path}`")
-        return
-    except Exception as exc:
-        st.error(f"Cannot load `{history_sr_path}`: {exc}")
-        return
+    fields_df = pd.DataFrame()
+    actions_df = pd.DataFrame()
+    weekly_df = pd.DataFrame()
+    reopen_df = pd.DataFrame()
+    hist_metrics = {
+        "total_events": 0,
+        "unique_sr": 0,
+        "assign_related_rate": np.nan,
+        "close_action_rate": np.nan,
+    }
+    if not _IS_STREAMLIT_CLOUD:
+        try:
+            with st.spinner("Computing History SR aggregates..."):
+                fields_df, actions_df, weekly_df, reopen_df, hist_metrics = history_summary(history_sr_path)
+        except FileNotFoundError:
+            st.error(f"File not found: `{history_sr_path}`")
+            return
+        except Exception as exc:
+            st.error(f"Cannot load `{history_sr_path}`: {exc}")
+            return
 
     reopen_dist_df = build_reopen_distribution(sr_handoffs, reopen_df, max_reopens=10)
 
@@ -1475,6 +1491,9 @@ def render_handoffs_history_tab(
 
     st.divider()
     st.markdown("#### History SR changes")
+    if _IS_STREAMLIT_CLOUD:
+        st.warning("History SR aggregation is disabled in Cloud safe mode.")
+        return
 
     top_n_fields = st.slider(
         "Top fields in weekly view",
