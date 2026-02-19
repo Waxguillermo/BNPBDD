@@ -169,8 +169,15 @@ def localize_data_source(path: str, suffix: str = "") -> str:
 
 
 @st.cache_data(show_spinner=False)
-def load_parquet(path: str) -> pd.DataFrame:
+def load_parquet(path: str, columns: tuple[str, ...] | None = None) -> pd.DataFrame:
     src = localize_data_source(path, suffix=".parquet")
+    if columns:
+        import pyarrow.parquet as pq
+
+        available = set(pq.ParquetFile(src).schema.names)
+        selected = [c for c in columns if c in available]
+        if selected:
+            return pd.read_parquet(src, columns=selected)
     return pd.read_parquet(src)
 
 
@@ -1040,8 +1047,35 @@ def plot_overdue_by_category(overdue_df: pd.DataFrame) -> go.Figure:
 def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     st.subheader("Service Requests")
 
+    sr_columns = (
+        "ID",
+        "SR_ID",
+        "SRNUMBER",
+        "CATEGORY_NAME",
+        "PRIORITY_ID",
+        "STATUS_ID",
+        "JUR_DESK_ID",
+        "CREATIONDATE",
+        "CLOSINGDATE",
+        "IS_CLOSED",
+        "OVERDUE_FLAG_ASOF",
+        "ACK_ON_TIME",
+        "FR_ON_TIME",
+        "DUE_DATE",
+        "OVERDUE_DAYS_ASOF",
+        "CLOSE_DELAY_D",
+        "ACK_DELAY_H",
+        "FR_DELAY_H",
+        "REOPEN_COUNT",
+        "REOPENING_COUNT",
+        "N_REOPEN",
+        "NB_REOPEN",
+        "NUMBER_OF_REOPENINGS",
+        "IS_REOPENED",
+        "REOPEN_DATE",
+    )
     try:
-        df = load_parquet(path)
+        df = load_parquet(path, columns=sr_columns)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
         return
@@ -1199,8 +1233,24 @@ def render_activity_tab(path: str):
     st.subheader("Activity")
     st.caption(f"Source: `{path}`")
 
+    activity_columns = (
+        "ID",
+        "SR_ID",
+        "CATEGORY_NAME",
+        "CREATIONDATE",
+        "CLOSINGDATE",
+        "DUE_DATE",
+        "IS_QUICK_TASK",
+        "REOPEN_COUNT",
+        "REOPENING_COUNT",
+        "N_REOPEN",
+        "NB_REOPEN",
+        "NUMBER_OF_REOPENINGS",
+        "IS_REOPENED",
+        "REOPEN_DATE",
+    )
     try:
-        df = load_parquet(path)
+        df = load_parquet(path, columns=activity_columns)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
         return
@@ -1388,9 +1438,19 @@ def render_handoffs_history_tab(
 ):
     st.subheader("Handoffs & History SR")
     
+    handoff_columns = (
+        "ID",
+        "SR_ID",
+        "JUR_ASSIGNEDGROUP_ID",
+        "JUR_DESK_ID",
+        "CREATIONDATE",
+        "ACCEPTED_DATE",
+        "UPDATE_DATE",
+        "CLOSINGDATE",
+    )
 
     try:
-        activity_df = load_parquet(activity_graph_path)
+        activity_df = load_parquet(activity_graph_path, columns=handoff_columns)
     except FileNotFoundError:
         st.error(f"File not found: `{activity_graph_path}`")
         return
