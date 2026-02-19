@@ -1581,7 +1581,7 @@ with st.sidebar:
     st.header("SR Data")
     sr_path = st.text_input(
         "Path to sr_enriched.parquet",
-        value="https://drive.google.com/file/d/1nawUFaBJWXX3B7mSi0uaM0ltlKyc_kdr/view?usp=sharing",
+        value="https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link",
     )
 
     st.header("SR Filters")
