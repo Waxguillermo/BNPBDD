@@ -1,6 +1,8 @@
 import os
+import re
 import textwrap
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 os.makedirs("/tmp/mplconfig", exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
@@ -11,6 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -117,19 +120,50 @@ def wrap_label(value: str, width: int = 30) -> str:
     return "\n".join(textwrap.wrap(str(value), width))
 
 
+def normalize_data_source(path: str) -> str:
+    raw = str(path).strip()
+    if not raw:
+        return raw
+
+    if "drive.google.com" not in raw:
+        return raw
+
+    parsed = urlparse(raw)
+    file_id = None
+
+    match = re.search(r"/file/d/([^/]+)", parsed.path)
+    if match:
+        file_id = match.group(1)
+    else:
+        query = parse_qs(parsed.query)
+        file_id = query.get("id", [None])[0]
+
+    if not file_id:
+        return raw
+
+    return f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+
+
 @st.cache_data(show_spinner=False)
 def load_parquet(path: str) -> pd.DataFrame:
-    return pd.read_parquet(path)
+    src = normalize_data_source(path)
+    return pd.read_parquet(src)
 
 
 @st.cache_data(show_spinner=False)
 def load_html(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    src = normalize_data_source(path)
+    if src.startswith(("http://", "https://")):
+        resp = requests.get(src, timeout=180)
+        resp.raise_for_status()
+        return resp.text
+    return Path(src).read_text(encoding="utf-8")
 
 
 @st.cache_data(show_spinner=False)
 def load_sr_overdue_map(path: str) -> pd.DataFrame:
-    base = pd.read_parquet(path, columns=["ID", "OVERDUE_FLAG_ASOF"])
+    src = normalize_data_source(path)
+    base = pd.read_parquet(src, columns=["ID", "OVERDUE_FLAG_ASOF"])
     base["ID"] = pd.to_numeric(base["ID"], errors="coerce").astype("Int64")
     base["OVERDUE_FLAG_ASOF"] = pd.to_numeric(base["OVERDUE_FLAG_ASOF"], errors="coerce")
     base = base.dropna(subset=["ID"])
@@ -1125,18 +1159,17 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         st.dataframe(df_f.head(500))
 
 
-def render_activity_tab():
+def render_activity_tab(path: str):
     st.subheader("Activity")
-    activity_path = "activity.parquet"
-    st.caption(f"Source: `{activity_path}`")
+    st.caption(f"Source: `{path}`")
 
     try:
-        df = load_parquet(activity_path)
+        df = load_parquet(path)
     except FileNotFoundError:
-        st.error("File `activity.parquet` not found in the project folder.")
+        st.error(f"File not found: `{path}`")
         return
     except Exception as exc:
-        st.error(f"Cannot load `activity.parquet`: {exc}")
+        st.error(f"Cannot load `{path}`: {exc}")
         return
 
     for col in ["CREATIONDATE", "CLOSINGDATE"]:
@@ -1510,7 +1543,10 @@ st.caption("SLA breach prediction powered by quantile regression · Activity, SR
 
 with st.sidebar:
     st.header("SR Data")
-    sr_path = st.text_input("Path to sr_enriched.parquet", value="sr_enriched.parquet")
+    sr_path = st.text_input(
+        "Path to sr_enriched.parquet",
+        value="https://drive.google.com/file/d/1nawUFaBJWXX3B7mSi0uaM0ltlKyc_kdr/view?usp=sharing",
+    )
 
     st.header("SR Filters")
     start_year = st.selectbox("Start from year", options=[2024, 2025, 2026], index=1)
@@ -1518,23 +1554,27 @@ with st.sidebar:
     clip_q = 0.995 if clip_outliers else None
 
     st.header("Handoffs & History Data")
+    activity_path = st.text_input(
+        "Path to activity.parquet",
+        value="https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link",
+    )
     activity_graph_path = st.text_input(
         "Path to Activity_Jan_to_Sept_graph.parquet",
-        value="Activity_Jan_to_Sept_graph.parquet",
+        value="https://drive.google.com/file/d/1nawUFaBJWXX3B7mSi0uaM0ltlKyc_kdr/view?usp=drive_link",
     )
     history_sr_path = st.text_input(
         "Path to History_SR_Jan_to_Sept.parquet",
-        value="History_SR_Jan_to_Sept.parquet",
+        value="https://drive.google.com/file/d/1v5aJ6cFN-0-UnkJLm9hkERLVKqyWN5TW/view?usp=drive_link",
     )
     network_html_path = st.text_input(
         "Path to routing network HTML",
-        value="activity_routing_network.html",
+        value="https://drive.google.com/file/d/1FumhWE4zTzOBLzS2U8pABB3JZZOlR52z/view?usp=drive_link",
     )
 
 tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
 with tab_sr:
     render_sr_tab(sr_path, start_year, clip_q)
 with tab_activity:
-    render_activity_tab()
+    render_activity_tab(activity_path)
 with tab_handoff_history:
     render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
