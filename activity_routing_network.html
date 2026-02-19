@@ -1,0 +1,178 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script src="lib/bindings/utils.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 750px;
+                 background-color: #ffffff;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+             #config {
+                 float: left;
+                 width: 400px;
+                 height: 600px;
+             }
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+            <div id="config"></div>
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"color": "#97c2fc", "id": 72620, "label": "72620", "shape": "dot", "size": 10.297872340425531, "title": "Group 72620\u003cbr\u003eTraffic: 14", "value": 14.0}, {"color": "#97c2fc", "id": 72621, "label": "72621", "shape": "dot", "size": 10.297872340425531, "title": "Group 72621\u003cbr\u003eTraffic: 14", "value": 14.0}, {"color": "#97c2fc", "id": 72858, "label": "72858", "shape": "dot", "size": 10.808510638297872, "title": "Group 72858\u003cbr\u003eTraffic: 38", "value": 38.0}, {"color": "#97c2fc", "id": 72860, "label": "72860", "shape": "dot", "size": 12.23404255319149, "title": "Group 72860\u003cbr\u003eTraffic: 105", "value": 105.0}, {"color": "#97c2fc", "id": 72974, "label": "72974", "shape": "dot", "size": 32.829787234042556, "title": "Group 72974\u003cbr\u003eTraffic: 1073", "value": 1073.0}, {"color": "#97c2fc", "id": 72975, "label": "72975", "shape": "dot", "size": 10.74468085106383, "title": "Group 72975\u003cbr\u003eTraffic: 35", "value": 35.0}, {"color": "#97c2fc", "id": 72990, "label": "72990", "shape": "dot", "size": 19.340425531914892, "title": "Group 72990\u003cbr\u003eTraffic: 439", "value": 439.0}, {"color": "#97c2fc", "id": 73116, "label": "73116", "shape": "dot", "size": 10.382978723404255, "title": "Group 73116\u003cbr\u003eTraffic: 18", "value": 18.0}, {"color": "#97c2fc", "id": 73124, "label": "73124", "shape": "dot", "size": 29.340425531914892, "title": "Group 73124\u003cbr\u003eTraffic: 909", "value": 909.0}, {"color": "#97c2fc", "id": 73125, "label": "73125", "shape": "dot", "size": 11.170212765957446, "title": "Group 73125\u003cbr\u003eTraffic: 55", "value": 55.0}, {"color": "#97c2fc", "id": 73143, "label": "73143", "shape": "dot", "size": 13.212765957446809, "title": "Group 73143\u003cbr\u003eTraffic: 151", "value": 151.0}, {"color": "#97c2fc", "id": 73149, "label": "73149", "shape": "dot", "size": 15.659574468085108, "title": "Group 73149\u003cbr\u003eTraffic: 266", "value": 266.0}, {"color": "#97c2fc", "id": 73150, "label": "73150", "shape": "dot", "size": 13.957446808510639, "title": "Group 73150\u003cbr\u003eTraffic: 186", "value": 186.0}, {"color": "#97c2fc", "id": 73151, "label": "73151", "shape": "dot", "size": 11.297872340425531, "title": "Group 73151\u003cbr\u003eTraffic: 61", "value": 61.0}, {"color": "#97c2fc", "id": 73152, "label": "73152", "shape": "dot", "size": 18.340425531914896, "title": "Group 73152\u003cbr\u003eTraffic: 392", "value": 392.0}, {"color": "#97c2fc", "id": 73154, "label": "73154", "shape": "dot", "size": 10.574468085106384, "title": "Group 73154\u003cbr\u003eTraffic: 27", "value": 27.0}, {"color": "#97c2fc", "id": 73275, "label": "73275", "shape": "dot", "size": 24.170212765957444, "title": "Group 73275\u003cbr\u003eTraffic: 666", "value": 666.0}, {"color": "#97c2fc", "id": 73535, "label": "73535", "shape": "dot", "size": 10.595744680851064, "title": "Group 73535\u003cbr\u003eTraffic: 28", "value": 28.0}, {"color": "#97c2fc", "id": 74399, "label": "74399", "shape": "dot", "size": 10.297872340425531, "title": "Group 74399\u003cbr\u003eTraffic: 14", "value": 14.0}, {"color": "#97c2fc", "id": 74785, "label": "74785", "shape": "dot", "size": 11.702127659574469, "title": "Group 74785\u003cbr\u003eTraffic: 80", "value": 80.0}, {"color": "#97c2fc", "id": 75625, "label": "75625", "shape": "dot", "size": 13.340425531914892, "title": "Group 75625\u003cbr\u003eTraffic: 157", "value": 157.0}, {"color": "#97c2fc", "id": 75750, "label": "75750", "shape": "dot", "size": 11.936170212765958, "title": "Group 75750\u003cbr\u003eTraffic: 91", "value": 91.0}, {"color": "#97c2fc", "id": 75945, "label": "75945", "shape": "dot", "size": 12.617021276595745, "title": "Group 75945\u003cbr\u003eTraffic: 123", "value": 123.0}, {"color": "#97c2fc", "id": 76006, "label": "76006", "shape": "dot", "size": 11.787234042553191, "title": "Group 76006\u003cbr\u003eTraffic: 84", "value": 84.0}, {"color": "#97c2fc", "id": 76089, "label": "76089", "shape": "dot", "size": 10.48936170212766, "title": "Group 76089\u003cbr\u003eTraffic: 23", "value": 23.0}, {"color": "#97c2fc", "id": 76592, "label": "76592", "shape": "dot", "size": 10.53191489361702, "title": "Group 76592\u003cbr\u003eTraffic: 25", "value": 25.0}, {"color": "#97c2fc", "id": 76788, "label": "76788", "shape": "dot", "size": 11.680851063829786, "title": "Group 76788\u003cbr\u003eTraffic: 79", "value": 79.0}, {"color": "#97c2fc", "id": 76808, "label": "76808", "shape": "dot", "size": 17.5531914893617, "title": "Group 76808\u003cbr\u003eTraffic: 355", "value": 355.0}, {"color": "#97c2fc", "id": 76831, "label": "76831", "shape": "dot", "size": 37.702127659574465, "title": "Group 76831\u003cbr\u003eTraffic: 1302", "value": 1302.0}, {"color": "#97c2fc", "id": 76848, "label": "76848", "shape": "dot", "size": 10.23404255319149, "title": "Group 76848\u003cbr\u003eTraffic: 11", "value": 11.0}, {"color": "#97c2fc", "id": 76868, "label": "76868", "shape": "dot", "size": 10.23404255319149, "title": "Group 76868\u003cbr\u003eTraffic: 11", "value": 11.0}, {"color": "#97c2fc", "id": 76888, "label": "76888", "shape": "dot", "size": 50.0, "title": "Group 76888\u003cbr\u003eTraffic: 1880", "value": 1880.0}, {"color": "#97c2fc", "id": 76908, "label": "76908", "shape": "dot", "size": 10.25531914893617, "title": "Group 76908\u003cbr\u003eTraffic: 12", "value": 12.0}, {"color": "#97c2fc", "id": 76909, "label": "76909", "shape": "dot", "size": 11.957446808510639, "title": "Group 76909\u003cbr\u003eTraffic: 92", "value": 92.0}, {"color": "#97c2fc", "id": 76911, "label": "76911", "shape": "dot", "size": 10.212765957446809, "title": "Group 76911\u003cbr\u003eTraffic: 10", "value": 10.0}, {"color": "#97c2fc", "id": 76928, "label": "76928", "shape": "dot", "size": 10.893617021276595, "title": "Group 76928\u003cbr\u003eTraffic: 42", "value": 42.0}, {"color": "#97c2fc", "id": 76948, "label": "76948", "shape": "dot", "size": 20.404255319148938, "title": "Group 76948\u003cbr\u003eTraffic: 489", "value": 489.0}, {"color": "#97c2fc", "id": 77071, "label": "77071", "shape": "dot", "size": 11.787234042553191, "title": "Group 77071\u003cbr\u003eTraffic: 84", "value": 84.0}, {"color": "#97c2fc", "id": 77168, "label": "77168", "shape": "dot", "size": 11.446808510638299, "title": "Group 77168\u003cbr\u003eTraffic: 68", "value": 68.0}, {"color": "#97c2fc", "id": 77589, "label": "77589", "shape": "dot", "size": 12.595744680851064, "title": "Group 77589\u003cbr\u003eTraffic: 122", "value": 122.0}, {"color": "#97c2fc", "id": 77590, "label": "77590", "shape": "dot", "size": 10.23404255319149, "title": "Group 77590\u003cbr\u003eTraffic: 11", "value": 11.0}, {"color": "#97c2fc", "id": 79148, "label": "79148", "shape": "dot", "size": 10.297872340425531, "title": "Group 79148\u003cbr\u003eTraffic: 14", "value": 14.0}, {"color": "#97c2fc", "id": 79667, "label": "79667", "shape": "dot", "size": 10.787234042553191, "title": "Group 79667\u003cbr\u003eTraffic: 37", "value": 37.0}, {"color": "#97c2fc", "id": 80967, "label": "80967", "shape": "dot", "size": 11.0, "title": "Group 80967\u003cbr\u003eTraffic: 47", "value": 47.0}, {"color": "#97c2fc", "id": 80968, "label": "80968", "shape": "dot", "size": 12.297872340425531, "title": "Group 80968\u003cbr\u003eTraffic: 108", "value": 108.0}, {"color": "#97c2fc", "id": 81566, "label": "81566", "shape": "dot", "size": 11.404255319148936, "title": "Group 81566\u003cbr\u003eTraffic: 66", "value": 66.0}, {"color": "#97c2fc", "id": 81567, "label": "81567", "shape": "dot", "size": 11.404255319148936, "title": "Group 81567\u003cbr\u003eTraffic: 66", "value": 66.0}, {"color": "#97c2fc", "id": 82372, "label": "82372", "shape": "dot", "size": 11.106382978723405, "title": "Group 82372\u003cbr\u003eTraffic: 52", "value": 52.0}, {"color": "#97c2fc", "id": 83987, "label": "83987", "shape": "dot", "size": 10.595744680851064, "title": "Group 83987\u003cbr\u003eTraffic: 28", "value": 28.0}]);
+                  edges = new vis.DataSet([{"arrows": "to", "from": 73275, "title": "73275 \u2192 76888\u003cbr\u003eHandoffs: 359", "to": 76888, "value": 359, "width": 8.0}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73275\u003cbr\u003eHandoffs: 307", "to": 73275, "value": 307, "width": 6.986072423398328}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 72974\u003cbr\u003eHandoffs: 229", "to": 72974, "value": 229, "width": 5.465181058495822}, {"arrows": "to", "from": 73152, "title": "73152 \u2192 76888\u003cbr\u003eHandoffs: 218", "to": 76888, "value": 218, "width": 5.250696378830084}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 73124\u003cbr\u003eHandoffs: 218", "to": 73124, "value": 218, "width": 5.250696378830084}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 73124\u003cbr\u003eHandoffs: 206", "to": 73124, "value": 206, "width": 5.016713091922005}, {"arrows": "to", "from": 73149, "title": "73149 \u2192 76888\u003cbr\u003eHandoffs: 147", "to": 76888, "value": 147, "width": 3.8662952646239552}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 76831\u003cbr\u003eHandoffs: 137", "to": 76831, "value": 137, "width": 3.671309192200557}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73152\u003cbr\u003eHandoffs: 119", "to": 73152, "value": 119, "width": 3.32033426183844}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 73124\u003cbr\u003eHandoffs: 107", "to": 73124, "value": 107, "width": 3.086350974930362}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 75625\u003cbr\u003eHandoffs: 86", "to": 75625, "value": 86, "width": 2.6768802228412256}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 73124\u003cbr\u003eHandoffs: 77", "to": 73124, "value": 77, "width": 2.501392757660167}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 76948\u003cbr\u003eHandoffs: 74", "to": 76948, "value": 74, "width": 2.4428969359331476}, {"arrows": "to", "from": 75625, "title": "75625 \u2192 76888\u003cbr\u003eHandoffs: 71", "to": 76888, "value": 71, "width": 2.384401114206128}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 72974\u003cbr\u003eHandoffs: 67", "to": 72974, "value": 67, "width": 2.3064066852367686}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 76948\u003cbr\u003eHandoffs: 61", "to": 76948, "value": 61, "width": 2.1894150417827296}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 76831\u003cbr\u003eHandoffs: 61", "to": 76831, "value": 61, "width": 2.1894150417827296}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 76831\u003cbr\u003eHandoffs: 61", "to": 76831, "value": 61, "width": 2.1894150417827296}, {"arrows": "to", "from": 80968, "title": "80968 \u2192 76888\u003cbr\u003eHandoffs: 57", "to": 76888, "value": 57, "width": 2.1114206128133706}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76888\u003cbr\u003eHandoffs: 56", "to": 76888, "value": 56, "width": 2.0919220055710306}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76808\u003cbr\u003eHandoffs: 56", "to": 76808, "value": 56, "width": 2.0919220055710306}, {"arrows": "to", "from": 76006, "title": "76006 \u2192 72990\u003cbr\u003eHandoffs: 56", "to": 72990, "value": 56, "width": 2.0919220055710306}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 72990\u003cbr\u003eHandoffs: 54", "to": 72990, "value": 54, "width": 2.052924791086351}, {"arrows": "to", "from": 72860, "title": "72860 \u2192 72990\u003cbr\u003eHandoffs: 54", "to": 72990, "value": 54, "width": 2.052924791086351}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 76831\u003cbr\u003eHandoffs: 54", "to": 76831, "value": 54, "width": 2.052924791086351}, {"arrows": "to", "from": 73150, "title": "73150 \u2192 76888\u003cbr\u003eHandoffs: 53", "to": 76888, "value": 53, "width": 2.033426183844011}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73150\u003cbr\u003eHandoffs: 52", "to": 73150, "value": 52, "width": 2.013927576601671}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 72860\u003cbr\u003eHandoffs: 51", "to": 72860, "value": 51, "width": 1.9944289693593316}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 80968\u003cbr\u003eHandoffs: 51", "to": 80968, "value": 51, "width": 1.9944289693593316}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 76948\u003cbr\u003eHandoffs: 50", "to": 76948, "value": 50, "width": 1.9749303621169916}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 72974\u003cbr\u003eHandoffs: 49", "to": 72974, "value": 49, "width": 1.9554317548746518}, {"arrows": "to", "from": 73149, "title": "73149 \u2192 75750\u003cbr\u003eHandoffs: 47", "to": 75750, "value": 47, "width": 1.916434540389972}, {"arrows": "to", "from": 81567, "title": "81567 \u2192 81566\u003cbr\u003eHandoffs: 44", "to": 81566, "value": 44, "width": 1.8579387186629526}, {"arrows": "to", "from": 75750, "title": "75750 \u2192 73149\u003cbr\u003eHandoffs: 44", "to": 73149, "value": 44, "width": 1.8579387186629526}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 76788\u003cbr\u003eHandoffs: 39", "to": 76788, "value": 39, "width": 1.7604456824512535}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 77589\u003cbr\u003eHandoffs: 38", "to": 77589, "value": 38, "width": 1.7409470752089136}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 73152\u003cbr\u003eHandoffs: 37", "to": 73152, "value": 37, "width": 1.7214484679665738}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 76808\u003cbr\u003eHandoffs: 36", "to": 76808, "value": 36, "width": 1.701949860724234}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 73143\u003cbr\u003eHandoffs: 32", "to": 73143, "value": 32, "width": 1.6239554317548746}, {"arrows": "to", "from": 73125, "title": "73125 \u2192 76888\u003cbr\u003eHandoffs: 31", "to": 76888, "value": 31, "width": 1.6044568245125348}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 82372\u003cbr\u003eHandoffs: 31", "to": 82372, "value": 31, "width": 1.6044568245125348}, {"arrows": "to", "from": 73150, "title": "73150 \u2192 72990\u003cbr\u003eHandoffs: 31", "to": 72990, "value": 31, "width": 1.6044568245125348}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 73143\u003cbr\u003eHandoffs: 30", "to": 73143, "value": 30, "width": 1.584958217270195}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 73151\u003cbr\u003eHandoffs: 29", "to": 73151, "value": 29, "width": 1.565459610027855}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73149\u003cbr\u003eHandoffs: 28", "to": 73149, "value": 28, "width": 1.5459610027855153}, {"arrows": "to", "from": 75945, "title": "75945 \u2192 72974\u003cbr\u003eHandoffs: 28", "to": 72974, "value": 28, "width": 1.5459610027855153}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 76006\u003cbr\u003eHandoffs: 28", "to": 76006, "value": 28, "width": 1.5459610027855153}, {"arrows": "to", "from": 73150, "title": "73150 \u2192 73154\u003cbr\u003eHandoffs: 27", "to": 73154, "value": 27, "width": 1.5264623955431755}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 76909\u003cbr\u003eHandoffs: 25", "to": 76909, "value": 25, "width": 1.4874651810584958}, {"arrows": "to", "from": 73143, "title": "73143 \u2192 73124\u003cbr\u003eHandoffs: 25", "to": 73124, "value": 25, "width": 1.4874651810584958}, {"arrows": "to", "from": 76592, "title": "76592 \u2192 76888\u003cbr\u003eHandoffs: 25", "to": 76888, "value": 25, "width": 1.4874651810584958}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76928\u003cbr\u003eHandoffs: 25", "to": 76928, "value": 25, "width": 1.4874651810584958}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 72858\u003cbr\u003eHandoffs: 24", "to": 72858, "value": 24, "width": 1.467966573816156}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 73143\u003cbr\u003eHandoffs: 24", "to": 73143, "value": 24, "width": 1.467966573816156}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 74785\u003cbr\u003eHandoffs: 23", "to": 74785, "value": 23, "width": 1.448467966573816}, {"arrows": "to", "from": 75945, "title": "75945 \u2192 73124\u003cbr\u003eHandoffs: 23", "to": 73124, "value": 23, "width": 1.448467966573816}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 77168\u003cbr\u003eHandoffs: 23", "to": 77168, "value": 23, "width": 1.448467966573816}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 72990\u003cbr\u003eHandoffs: 22", "to": 72990, "value": 22, "width": 1.4289693593314763}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 77071\u003cbr\u003eHandoffs: 22", "to": 77071, "value": 22, "width": 1.4289693593314763}, {"arrows": "to", "from": 81566, "title": "81566 \u2192 81567\u003cbr\u003eHandoffs: 22", "to": 81567, "value": 22, "width": 1.4289693593314763}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 73143\u003cbr\u003eHandoffs: 21", "to": 73143, "value": 21, "width": 1.4094707520891365}, {"arrows": "to", "from": 82372, "title": "82372 \u2192 76831\u003cbr\u003eHandoffs: 21", "to": 76831, "value": 21, "width": 1.4094707520891365}, {"arrows": "to", "from": 76909, "title": "76909 \u2192 72990\u003cbr\u003eHandoffs: 20", "to": 72990, "value": 20, "width": 1.3899721448467965}, {"arrows": "to", "from": 76909, "title": "76909 \u2192 72974\u003cbr\u003eHandoffs: 20", "to": 72974, "value": 20, "width": 1.3899721448467965}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 77071\u003cbr\u003eHandoffs: 20", "to": 77071, "value": 20, "width": 1.3899721448467965}, {"arrows": "to", "from": 77589, "title": "77589 \u2192 76888\u003cbr\u003eHandoffs: 20", "to": 76888, "value": 20, "width": 1.3899721448467965}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 79667\u003cbr\u003eHandoffs: 20", "to": 79667, "value": 20, "width": 1.3899721448467965}, {"arrows": "to", "from": 77168, "title": "77168 \u2192 72974\u003cbr\u003eHandoffs: 19", "to": 72974, "value": 19, "width": 1.3704735376044568}, {"arrows": "to", "from": 80967, "title": "80967 \u2192 76888\u003cbr\u003eHandoffs: 19", "to": 76888, "value": 19, "width": 1.3704735376044568}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 73143\u003cbr\u003eHandoffs: 19", "to": 73143, "value": 19, "width": 1.3704735376044568}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 72975\u003cbr\u003eHandoffs: 19", "to": 72975, "value": 19, "width": 1.3704735376044568}, {"arrows": "to", "from": 73152, "title": "73152 \u2192 76831\u003cbr\u003eHandoffs: 18", "to": 76831, "value": 18, "width": 1.350974930362117}, {"arrows": "to", "from": 73116, "title": "73116 \u2192 75945\u003cbr\u003eHandoffs: 18", "to": 75945, "value": 18, "width": 1.350974930362117}, {"arrows": "to", "from": 77589, "title": "77589 \u2192 74785\u003cbr\u003eHandoffs: 18", "to": 74785, "value": 18, "width": 1.350974930362117}, {"arrows": "to", "from": 74785, "title": "74785 \u2192 77589\u003cbr\u003eHandoffs: 18", "to": 77589, "value": 18, "width": 1.350974930362117}, {"arrows": "to", "from": 76909, "title": "76909 \u2192 77071\u003cbr\u003eHandoffs: 17", "to": 77071, "value": 17, "width": 1.331476323119777}, {"arrows": "to", "from": 76928, "title": "76928 \u2192 76831\u003cbr\u003eHandoffs: 17", "to": 76831, "value": 17, "width": 1.331476323119777}, {"arrows": "to", "from": 79667, "title": "79667 \u2192 72974\u003cbr\u003eHandoffs: 17", "to": 72974, "value": 17, "width": 1.331476323119777}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 75945\u003cbr\u003eHandoffs: 17", "to": 75945, "value": 17, "width": 1.331476323119777}, {"arrows": "to", "from": 83987, "title": "83987 \u2192 73535\u003cbr\u003eHandoffs: 17", "to": 73535, "value": 17, "width": 1.331476323119777}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76788\u003cbr\u003eHandoffs: 16", "to": 76788, "value": 16, "width": 1.3119777158774373}, {"arrows": "to", "from": 72975, "title": "72975 \u2192 76831\u003cbr\u003eHandoffs: 16", "to": 76831, "value": 16, "width": 1.3119777158774373}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 72974\u003cbr\u003eHandoffs: 15", "to": 72974, "value": 15, "width": 1.2924791086350975}, {"arrows": "to", "from": 77589, "title": "77589 \u2192 76831\u003cbr\u003eHandoffs: 15", "to": 76831, "value": 15, "width": 1.2924791086350975}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 76808\u003cbr\u003eHandoffs: 14", "to": 76808, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 80967\u003cbr\u003eHandoffs: 14", "to": 80967, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73125\u003cbr\u003eHandoffs: 14", "to": 73125, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 79148, "title": "79148 \u2192 74399\u003cbr\u003eHandoffs: 14", "to": 74399, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 75945, "title": "75945 \u2192 76948\u003cbr\u003eHandoffs: 14", "to": 76948, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 80967\u003cbr\u003eHandoffs: 14", "to": 80967, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 77168, "title": "77168 \u2192 76888\u003cbr\u003eHandoffs: 14", "to": 76888, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 72858, "title": "72858 \u2192 72990\u003cbr\u003eHandoffs: 14", "to": 72990, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 72620, "title": "72620 \u2192 72621\u003cbr\u003eHandoffs: 14", "to": 72621, "value": 14, "width": 1.2729805013927575}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76089\u003cbr\u003eHandoffs: 13", "to": 76089, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 75945\u003cbr\u003eHandoffs: 13", "to": 75945, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 76788\u003cbr\u003eHandoffs: 13", "to": 76788, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 77589\u003cbr\u003eHandoffs: 13", "to": 77589, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 77071, "title": "77071 \u2192 72974\u003cbr\u003eHandoffs: 13", "to": 72974, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 76948, "title": "76948 \u2192 76831\u003cbr\u003eHandoffs: 13", "to": 76831, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 73150\u003cbr\u003eHandoffs: 13", "to": 73150, "value": 13, "width": 1.2534818941504178}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 77168\u003cbr\u003eHandoffs: 12", "to": 77168, "value": 12, "width": 1.233983286908078}, {"arrows": "to", "from": 76831, "title": "76831 \u2192 76948\u003cbr\u003eHandoffs: 12", "to": 76948, "value": 12, "width": 1.233983286908078}, {"arrows": "to", "from": 76908, "title": "76908 \u2192 77071\u003cbr\u003eHandoffs: 12", "to": 77071, "value": 12, "width": 1.233983286908078}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 77590\u003cbr\u003eHandoffs: 11", "to": 77590, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 72990, "title": "72990 \u2192 76831\u003cbr\u003eHandoffs: 11", "to": 76831, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 76848, "title": "76848 \u2192 76868\u003cbr\u003eHandoffs: 11", "to": 76868, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 76788, "title": "76788 \u2192 72990\u003cbr\u003eHandoffs: 11", "to": 72990, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73124\u003cbr\u003eHandoffs: 11", "to": 73124, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 76808, "title": "76808 \u2192 74785\u003cbr\u003eHandoffs: 11", "to": 74785, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 73151, "title": "73151 \u2192 76831\u003cbr\u003eHandoffs: 11", "to": 76831, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 73151, "title": "73151 \u2192 76888\u003cbr\u003eHandoffs: 11", "to": 76888, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 73535, "title": "73535 \u2192 83987\u003cbr\u003eHandoffs: 11", "to": 83987, "value": 11, "width": 1.214484679665738}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 73151\u003cbr\u003eHandoffs: 10", "to": 73151, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 73124, "title": "73124 \u2192 75945\u003cbr\u003eHandoffs: 10", "to": 75945, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 76911, "title": "76911 \u2192 73124\u003cbr\u003eHandoffs: 10", "to": 73124, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 76089\u003cbr\u003eHandoffs: 10", "to": 76089, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 73150, "title": "73150 \u2192 73125\u003cbr\u003eHandoffs: 10", "to": 73125, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 76909, "title": "76909 \u2192 76948\u003cbr\u003eHandoffs: 10", "to": 76948, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 76888, "title": "76888 \u2192 74785\u003cbr\u003eHandoffs: 10", "to": 74785, "value": 10, "width": 1.1949860724233983}, {"arrows": "to", "from": 72974, "title": "72974 \u2192 76808\u003cbr\u003eHandoffs: 10", "to": 76808, "value": 10, "width": 1.1949860724233983}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {
+    "configure": {
+        "enabled": true,
+        "filter": [
+            "physics"
+        ]
+    },
+    "edges": {
+        "color": {
+            "inherit": true
+        },
+        "smooth": {
+            "enabled": true,
+            "type": "dynamic"
+        }
+    },
+    "interaction": {
+        "dragNodes": true,
+        "hideEdgesOnDrag": false,
+        "hideNodesOnDrag": false
+    },
+    "physics": {
+        "barnesHut": {
+            "avoidOverlap": 0,
+            "centralGravity": 0.2,
+            "damping": 0.85,
+            "gravitationalConstant": -25000,
+            "springConstant": 0.04,
+            "springLength": 140
+        },
+        "enabled": true,
+        "stabilization": {
+            "enabled": true,
+            "fit": true,
+            "iterations": 1000,
+            "onlyDynamicEdges": false,
+            "updateInterval": 50
+        }
+    }
+};
+
+                  
+
+
+                  
+                  // if this network requires displaying the configure window,
+                  // put it in its div
+                  options.configure["container"] = document.getElementById("config");
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>

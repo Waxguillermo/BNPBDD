@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+.python312/
+.local-src/
+.python-downloads/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Data files (too large for GitHub)
+*.parquet
+
+# Local helper artifacts
+.venv.requirements.txt
