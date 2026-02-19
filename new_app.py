@@ -26,6 +26,9 @@ _COLOR_A = _BNP_PRIMARY
 _COLOR_B = _BNP_MID
 _TEMPLATE = "bnp_white"
 _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
+_IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
+_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
+_CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "1200000"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -118,8 +121,34 @@ def wrap_label(value: str, width: int = 30) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def load_parquet(path: str) -> pd.DataFrame:
-    return pd.read_parquet(path)
+def load_parquet(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(path)
+    selected = None
+    if columns:
+        available = set(pf.schema.names)
+        selected_cols = [c for c in columns if c in available]
+        selected = selected_cols if selected_cols else None
+
+    row_cap = max_rows
+    if row_cap is None and _IS_STREAMLIT_CLOUD:
+        row_cap = _CLOUD_MAX_ROWS
+
+    if row_cap is None:
+        return pd.read_parquet(path, columns=selected)
+
+    remaining = max(int(row_cap), 1)
+    chunks: list[pd.DataFrame] = []
+    for batch in pf.iter_batches(columns=selected, batch_size=min(100_000, remaining)):
+        chunk = batch.to_pandas()
+        if len(chunk) > remaining:
+            chunk = chunk.iloc[:remaining].copy()
+        chunks.append(chunk)
+        remaining -= len(chunk)
+        if remaining <= 0:
+            break
+    return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=selected)
 
 
 @st.cache_data(show_spinner=False)
@@ -259,9 +288,14 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
     total_events = 0
     assign_related = 0
 
+    history_limit = _CLOUD_HISTORY_MAX_EVENTS if _IS_STREAMLIT_CLOUD else None
     for batch in pf.iter_batches(columns=["FIELD", "ACTION", "SR_ID", "ACTION_DATE"], batch_size=500_000):
         block = batch.to_pandas()
         total_events += len(block)
+        if history_limit is not None and total_events > history_limit:
+            overflow = total_events - history_limit
+            block = block.iloc[:-overflow] if overflow < len(block) else block.iloc[0:0]
+            total_events = history_limit
 
         fields = (
             block["FIELD"]
@@ -312,6 +346,8 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
 
         sr_vals = sr_series.dropna().astype("int64").unique().tolist()
         sr_seen.update(sr_vals)
+        if history_limit is not None and total_events >= history_limit:
+            break
 
     top_fields = sorted(field_counts.items(), key=lambda x: x[1], reverse=True)
     top_fields_df = pd.DataFrame(top_fields, columns=["FIELD", "count"])
@@ -942,8 +978,15 @@ def plot_overdue_by_category(overdue_df: pd.DataFrame) -> go.Figure:
 def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     st.subheader("Service Requests")
 
+    sr_columns = (
+        "ID", "SR_ID", "SRNUMBER", "CATEGORY_NAME", "PRIORITY_ID", "STATUS_ID", "JUR_DESK_ID",
+        "CREATIONDATE", "CLOSINGDATE", "IS_CLOSED", "OVERDUE_FLAG_ASOF", "ACK_ON_TIME", "FR_ON_TIME",
+        "DUE_DATE", "OVERDUE_DAYS_ASOF", "CLOSE_DELAY_D", "ACK_DELAY_H", "FR_DELAY_H",
+        "REOPEN_COUNT", "REOPENING_COUNT", "N_REOPEN", "NB_REOPEN", "NUMBER_OF_REOPENINGS",
+        "IS_REOPENED", "REOPEN_DATE",
+    )
     try:
-        df = load_parquet(path)
+        df = load_parquet(path, columns=sr_columns)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
         return
@@ -1015,7 +1058,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 template=_TEMPLATE,
                 color_discrete_sequence=[_BNP_PRIMARY, _BNP_SOFT],
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             fig2 = px.line(
                 ts,
                 x="week",
@@ -1024,13 +1067,13 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 template=_TEMPLATE,
                 color_discrete_sequence=[_BNP_DARK],
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
 
     with right:
         #ow = overdue_by_week_created(df_f, col="OVERDUE_FLAG_ASOF")
         #if not ow.empty:
         #    fig3 = px.line(ow, x="week", y="overdue_rate", title="Overdue rate by creation week")
-        #    st.plotly_chart(fig3, use_container_width=True)
+        #    st.plotly_chart(fig3, width="stretch")
 
         if "CATEGORY_NAME" in df_f.columns and "OVERDUE_FLAG_ASOF" in df_f.columns:
             id_col = "ID" if "ID" in df_f.columns else "CATEGORY_NAME"
@@ -1050,7 +1093,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 template=_TEMPLATE,
                 color_discrete_sequence=[_BNP_MID],
             )
-            st.plotly_chart(fig4, use_container_width=True)
+            st.plotly_chart(fig4, width="stretch")
 
         reopen_dist, reopen_source = reopen_distribution(df_f)
         if not reopen_dist.empty:
@@ -1067,7 +1110,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             fig5.update_xaxes(title="Number of reopenings", type="category")
             fig5.update_yaxes(title="Ticket count")
             fig5.update_layout(margin=dict(l=0, r=30, t=60, b=10))
-            st.plotly_chart(fig5, use_container_width=True)
+            st.plotly_chart(fig5, width="stretch")
             
 
     st.divider()
@@ -1097,18 +1140,22 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         st.dataframe(df_f.head(500))
 
 
-def render_activity_tab():
+def render_activity_tab(path: str):
     st.subheader("Activity")
-    activity_path = "activity.parquet"
-    st.caption(f"Source: `{activity_path}`")
+    st.caption(f"Source: `{path}`")
 
+    activity_columns = (
+        "ID", "SR_ID", "CATEGORY_NAME", "CREATIONDATE", "CLOSINGDATE", "DUE_DATE",
+        "IS_QUICK_TASK", "REOPEN_COUNT", "REOPENING_COUNT", "N_REOPEN", "NB_REOPEN",
+        "NUMBER_OF_REOPENINGS", "IS_REOPENED", "REOPEN_DATE",
+    )
     try:
-        df = load_parquet(activity_path)
+        df = load_parquet(path, columns=activity_columns)
     except FileNotFoundError:
-        st.error("File `activity.parquet` not found in the project folder.")
+        st.error(f"File not found: `{path}`")
         return
     except Exception as exc:
-        st.error(f"Cannot load `activity.parquet`: {exc}")
+        st.error(f"Cannot load `{path}`: {exc}")
         return
 
     for col in ["CREATIONDATE", "CLOSINGDATE"]:
@@ -1205,7 +1252,7 @@ def render_activity_tab():
 
         sla_left, sla_right = st.columns([3, 2])
         with sla_left:
-            st.plotly_chart(plot_activity_sla_loss(loss_df, quantile=sla_quantile), use_container_width=True)
+            st.plotly_chart(plot_activity_sla_loss(loss_df, quantile=sla_quantile), width="stretch")
         with sla_right:
             details = loss_df[["CATEGORY_NAME", "count", "sla_pred", "total_lost", "share_lost", "breach_rate"]].copy()
             details = details.rename(columns={
@@ -1220,7 +1267,7 @@ def render_activity_tab():
             details["Lost days"] = details["Lost days"].round(1)
             details["Share (%)"] = details["Share (%)"].round(1)
             details["Breach rate"] = details["Breach rate"].apply(fmt_pct)
-            st.dataframe(details, use_container_width=True, hide_index=True, height=min(620, 45 + len(details) * 35))
+            st.dataframe(details, width="stretch", hide_index=True, height=min(620, 45 + len(details) * 35))
 
     st.divider()
 
@@ -1231,14 +1278,14 @@ def render_activity_tab():
         if top_resolution.empty:
             st.info("Chart unavailable: required columns missing or insufficient data.")
         else:
-            st.plotly_chart(plot_activity_resolution(top_resolution), use_container_width=True)
+            st.plotly_chart(plot_activity_resolution(top_resolution), width="stretch")
     with qt_col:
         top_quick = activity_top_quick_tasks(df_f, top_n=top_n)
         st.markdown("#### Quick tasks by category")
         if top_quick.empty:
             st.info("Chart unavailable: column `IS_QUICK_TASK` is missing or empty.")
         else:
-            st.plotly_chart(plot_activity_quick_tasks(top_quick), use_container_width=True)
+            st.plotly_chart(plot_activity_quick_tasks(top_quick), width="stretch")
 
     st.divider()
 
@@ -1254,7 +1301,7 @@ def render_activity_tab():
         st.caption("Click a bar to filter activities for that category.")
         overdue_event = st.plotly_chart(
             plot_overdue_by_category(overdue_df),
-            use_container_width=True,
+            width="stretch",
             on_select="rerun",
             key="overdue_chart",
         )
@@ -1280,7 +1327,7 @@ def render_activity_tab():
             nb = len(detail_renamed)
             total_j = detail_df["overdue_days"].sum()
             st.info(f"{nb} activity(ies) — {total_j:.0f} cumulative overdue days")
-        st.dataframe(detail_renamed.sort_values("Overdue (d)", ascending=False), use_container_width=True, hide_index=True)
+        st.dataframe(detail_renamed.sort_values("Overdue (d)", ascending=False), width="stretch", hide_index=True)
 
 
 def render_handoffs_history_tab(
@@ -1372,13 +1419,13 @@ def render_handoffs_history_tab(
         if impact.empty:
             st.info("Impact chart unavailable.")
         else:
-            st.plotly_chart(plot_handoff_impact(impact), use_container_width=True)
+            st.plotly_chart(plot_handoff_impact(impact), width="stretch")
     with right:
         st.markdown("#### Reopens per ticket")
         if reopen_dist_df.empty:
             st.info("No reopen distribution available.")
         else:
-            st.plotly_chart(plot_reopen_distribution(reopen_dist_df), use_container_width=True)
+            st.plotly_chart(plot_reopen_distribution(reopen_dist_df), width="stretch")
 
     st.divider()
 
@@ -1405,7 +1452,7 @@ def render_handoffs_history_tab(
         if transitions.empty:
             st.info("No handoff transitions found.")
         else:
-            st.plotly_chart(plot_handoff_transitions(transitions, top_n=top_n_trans), use_container_width=True)
+            st.plotly_chart(plot_handoff_transitions(transitions, top_n=top_n_trans), width="stretch")
     else:
         try:
             html_content = load_html(network_html_path)
@@ -1422,7 +1469,7 @@ def render_handoffs_history_tab(
     #    top_transitions["Transition"] = top_transitions["FROM"].astype(str) + " -> " + top_transitions["TO"].astype(str)
     #    st.dataframe(
     #        top_transitions[["Transition", "n"]].rename(columns={"n": "Handoffs"}),
-    #        use_container_width=True,
+    #        width="stretch",
     #        hide_index=True,
     #    )
 
@@ -1451,7 +1498,7 @@ def render_handoffs_history_tab(
         else:
             st.plotly_chart(
                 plot_history_weekly_fields(weekly_df, fields_df, top_k=top_n_fields),
-                use_container_width=True,
+                width="stretch",
             )
     with hist_right:
         if actions_df.empty:
@@ -1471,11 +1518,11 @@ def render_handoffs_history_tab(
             fig_actions.update_xaxes(showgrid=False, showticklabels=False, title="")
             fig_actions.update_yaxes(title="")
             fig_actions.update_layout(height=420, margin=dict(l=0, r=90, t=60, b=20))
-            st.plotly_chart(fig_actions, use_container_width=True)
+            st.plotly_chart(fig_actions, width="stretch")
 
 
 if Path(_BANNER_PATH).exists():
-    st.image(_BANNER_PATH, use_container_width=True)
+    st.image(_BANNER_PATH, width="stretch")
 
 st.title("BNP Paribas Operations Intelligence Dashboard")
 st.caption("SLA breach prediction powered by quantile regression · Activity, SR, handoffs & history analytics")
@@ -1490,6 +1537,10 @@ with st.sidebar:
     clip_q = 0.995 if clip_outliers else None
 
     st.header("Handoffs & History Data")
+    activity_path = st.text_input(
+        "Path to activity.parquet",
+        value="activity.parquet",
+    )
     activity_graph_path = st.text_input(
         "Path to Activity_Jan_to_Sept_graph.parquet",
         value="Activity_Jan_to_Sept_graph.parquet",
@@ -1503,10 +1554,15 @@ with st.sidebar:
         value="activity_routing_network.html",
     )
 
-tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
-with tab_sr:
+main_view = st.radio(
+    "View",
+    options=["SR", "Activity", "Handoffs & History SR"],
+    horizontal=True,
+    key="main_view",
+)
+if main_view == "SR":
     render_sr_tab(sr_path, start_year, clip_q)
-with tab_activity:
-    render_activity_tab()
-with tab_handoff_history:
+elif main_view == "Activity":
+    render_activity_tab(activity_path)
+else:
     render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
