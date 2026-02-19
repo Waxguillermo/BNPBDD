@@ -18,5 +18,4 @@ __pycache__/
 # Data files (too large for GitHub)
 *.parquet
 
-# Local helper artifacts
-.venv.requirements.txt
+
