@@ -1,6 +1,7 @@
 import os
 import re
 import textwrap
+import hashlib
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -144,9 +145,32 @@ def normalize_data_source(path: str) -> str:
     return f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
 
 
+def localize_data_source(path: str, suffix: str = "") -> str:
+    src = normalize_data_source(path)
+    if not src.startswith(("http://", "https://")):
+        return src
+
+    cache_dir = Path("/tmp/bnp_data_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(src.encode("utf-8")).hexdigest()[:24]
+    ext = suffix or Path(urlparse(src).path).suffix
+    local_path = cache_dir / f"{digest}{ext}"
+
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return str(local_path)
+
+    with requests.get(src, stream=True, timeout=300) as resp:
+        resp.raise_for_status()
+        with local_path.open("wb") as fh:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    fh.write(chunk)
+    return str(local_path)
+
+
 @st.cache_data(show_spinner=False)
 def load_parquet(path: str) -> pd.DataFrame:
-    src = normalize_data_source(path)
+    src = localize_data_source(path, suffix=".parquet")
     return pd.read_parquet(src)
 
 
@@ -162,7 +186,18 @@ def load_html(path: str) -> str:
 
 @st.cache_data(show_spinner=False)
 def load_sr_overdue_map(path: str) -> pd.DataFrame:
-    src = normalize_data_source(path)
+    src = localize_data_source(path, suffix=".parquet")
+    import pyarrow.parquet as pq
+
+    available_cols = set(pq.ParquetFile(src).schema.names)
+    required_cols = {"ID", "OVERDUE_FLAG_ASOF"}
+    missing = sorted(required_cols - available_cols)
+    if missing:
+        raise ValueError(
+            f"Source does not contain required columns {missing}. "
+            "Please provide the SR enriched parquet with `ID` and `OVERDUE_FLAG_ASOF`."
+        )
+
     base = pd.read_parquet(src, columns=["ID", "OVERDUE_FLAG_ASOF"])
     base["ID"] = pd.to_numeric(base["ID"], errors="coerce").astype("Int64")
     base["OVERDUE_FLAG_ASOF"] = pd.to_numeric(base["OVERDUE_FLAG_ASOF"], errors="coerce")
@@ -287,7 +322,8 @@ def prepare_handoff_data(
 def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     import pyarrow.parquet as pq
 
-    pf = pq.ParquetFile(path)
+    src = localize_data_source(path, suffix=".parquet")
+    pf = pq.ParquetFile(src)
     field_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
     weekly_field_counts: dict[tuple[pd.Timestamp, str], int] = {}
