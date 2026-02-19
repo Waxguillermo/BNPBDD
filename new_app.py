@@ -1574,27 +1574,52 @@ with st.sidebar:
         value="activity_routing_network.html",
     )
 
-main_view = st.radio(
-    "View",
-    options=["Home", "SR", "Activity", "Handoffs & History SR"],
-    horizontal=True,
-    index=0,
-    key="main_view",
-)
-load_data = st.toggle("Load data", value=False, help="Enable to load parquet files for the selected view.")
+tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
 
-if main_view == "Home":
-    st.info("Select a view and enable `Load data` to start loading files.")
-elif not load_data:
-    st.warning("Data loading is disabled. Enable `Load data` to run this view.")
-else:
-    try:
-        if main_view == "SR":
+with tab_sr:
+    load_sr = st.toggle(
+        "Load SR data",
+        value=False,
+        key="load_sr_data",
+        help="Enable to load SR parquet for this tab.",
+    )
+    if not load_sr:
+        st.info("Enable `Load SR data` to display this tab.")
+    else:
+        try:
             render_sr_tab(sr_path, start_year, clip_q)
-        elif main_view == "Activity":
+        except Exception as exc:
+            st.error(f"Runtime error in `SR`: {exc}")
+            st.code(traceback.format_exc())
+
+with tab_activity:
+    load_activity = st.toggle(
+        "Load Activity data",
+        value=True,
+        key="load_activity_data",
+        help="Enable to load Activity parquet for this tab.",
+    )
+    if not load_activity:
+        st.info("Enable `Load Activity data` to display this tab.")
+    else:
+        try:
             render_activity_tab(activity_path)
-        else:
+        except Exception as exc:
+            st.error(f"Runtime error in `Activity`: {exc}")
+            st.code(traceback.format_exc())
+
+with tab_handoff_history:
+    load_handoff = st.toggle(
+        "Load Handoffs & History data",
+        value=False,
+        key="load_handoff_data",
+        help="Enable to load Handoffs and History parquet files for this tab.",
+    )
+    if not load_handoff:
+        st.info("Enable `Load Handoffs & History data` to display this tab.")
+    else:
+        try:
             render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
-    except Exception as exc:
-        st.error(f"Runtime error in `{main_view}`: {exc}")
-        st.code(traceback.format_exc())
+        except Exception as exc:
+            st.error(f"Runtime error in `Handoffs & History SR`: {exc}")
+            st.code(traceback.format_exc())
