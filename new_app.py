@@ -1677,7 +1677,7 @@ with st.sidebar:
     st.header("SR Data")
     sr_path = st.text_input(
         "Path to sr_enriched.parquet",
-        value="https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link",
+        value="sr_enriched.parquet",
     )
 
     st.header("SR Filters")
@@ -1688,19 +1688,19 @@ with st.sidebar:
     st.header("Handoffs & History Data")
     activity_path = st.text_input(
         "Path to activity.parquet",
-        value="https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link",
+        value="activity.parquet",
     )
     activity_graph_path = st.text_input(
         "Path to Activity_Jan_to_Sept_graph.parquet",
-        value="https://drive.google.com/file/d/1nawUFaBJWXX3B7mSi0uaM0ltlKyc_kdr/view?usp=drive_link",
+        value="Activity_Jan_to_Sept_graph.parquet",
     )
     history_sr_path = st.text_input(
         "Path to History_SR_Jan_to_Sept.parquet",
-        value="https://drive.google.com/file/d/1v5aJ6cFN-0-UnkJLm9hkERLVKqyWN5TW/view?usp=drive_link",
+        value="History_SR_Jan_to_Sept.parquet",
     )
     network_html_path = st.text_input(
         "Path to routing network HTML",
-        value="https://drive.google.com/file/d/1FumhWE4zTzOBLzS2U8pABB3JZZOlR52z/view?usp=drive_link",
+        value="activity_routing_network.html",
     )
 
 main_view = st.radio(
