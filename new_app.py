@@ -30,6 +30,8 @@ _COLOR_A = _BNP_PRIMARY
 _COLOR_B = _BNP_MID
 _TEMPLATE = "bnp_white"
 _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
+_IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
+_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "250000"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -207,14 +209,35 @@ def localize_data_source(path: str, suffix: str = "") -> str:
 @st.cache_data(show_spinner=False)
 def load_parquet(path: str, columns: tuple[str, ...] | None = None) -> pd.DataFrame:
     src = localize_data_source(path, suffix=".parquet")
-    if columns:
-        import pyarrow.parquet as pq
+    import pyarrow.parquet as pq
 
-        available = set(pq.ParquetFile(src).schema.names)
-        selected = [c for c in columns if c in available]
-        if selected:
-            return pd.read_parquet(src, columns=selected)
-    return pd.read_parquet(src)
+    pf = pq.ParquetFile(src)
+    selected = None
+    if columns:
+        available = set(pf.schema.names)
+        selected_cols = [c for c in columns if c in available]
+        selected = selected_cols if selected_cols else None
+
+    try:
+        file_size = Path(src).stat().st_size
+    except Exception:
+        file_size = 0
+
+    # Safety mode for Streamlit Cloud to avoid OOM with very large parquet files.
+    if _IS_STREAMLIT_CLOUD and file_size > 150 * 1024 * 1024:
+        remaining = max(_CLOUD_MAX_ROWS, 1)
+        chunks: list[pd.DataFrame] = []
+        for batch in pf.iter_batches(columns=selected, batch_size=min(100_000, remaining)):
+            chunk = batch.to_pandas()
+            if len(chunk) > remaining:
+                chunk = chunk.iloc[:remaining].copy()
+            chunks.append(chunk)
+            remaining -= len(chunk)
+            if remaining <= 0:
+                break
+        return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=selected)
+
+    return pd.read_parquet(src, columns=selected)
 
 
 @st.cache_data(show_spinner=False)
@@ -374,10 +397,15 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
     sr_seen: set[int] = set()
     total_events = 0
     assign_related = 0
+    history_limit = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "1500000")) if _IS_STREAMLIT_CLOUD else None
 
     for batch in pf.iter_batches(columns=["FIELD", "ACTION", "SR_ID", "ACTION_DATE"], batch_size=500_000):
         block = batch.to_pandas()
         total_events += len(block)
+        if history_limit is not None and total_events > history_limit:
+            overflow = total_events - history_limit
+            block = block.iloc[:-overflow] if overflow < len(block) else block.iloc[0:0]
+            total_events = history_limit
 
         fields = (
             block["FIELD"]
@@ -428,6 +456,8 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
 
         sr_vals = sr_series.dropna().astype("int64").unique().tolist()
         sr_seen.update(sr_vals)
+        if history_limit is not None and total_events >= history_limit:
+            break
 
     top_fields = sorted(field_counts.items(), key=lambda x: x[1], reverse=True)
     top_fields_df = pd.DataFrame(top_fields, columns=["FIELD", "count"])
