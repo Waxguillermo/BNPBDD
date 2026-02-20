@@ -1666,7 +1666,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             continue
         seen_caps.add(cap)
         try:
-            df = load_parquet_uncached(path, columns=sr_columns, max_rows=cap)
+            df = load_parquet(path, columns=sr_columns, max_rows=cap)
             sr_max_rows = cap
             break
         except FileNotFoundError:
@@ -2385,7 +2385,7 @@ with st.sidebar:
     st.header("Performance")
     auto_clear_cache_on_tab_switch = st.toggle(
         "Auto clear cache on tab switch",
-        value=True,
+        value=False,
         key="auto_clear_cache_on_tab_switch",
         help="Clears Streamlit cache when switching dashboard tab to reduce memory pressure.",
     )
@@ -2408,55 +2408,28 @@ elif prev_tab != selected_tab:
     st.session_state["_previous_dashboard_tab"] = selected_tab
 
 if selected_tab == "SR":
-    load_sr = st.toggle(
-        "Load SR data",
-        value=False,
-        key="load_sr_data",
-        help="Enable to load SR parquet for this tab.",
-    )
-    if not load_sr:
-        st.info("Enable `Load SR data` to display this tab.")
-    else:
-        try:
-            render_sr_tab(sr_path, start_year, clip_q)
-        except Exception as exc:
-            st.error(f"Runtime error in `SR`: {exc}")
-            st.code(traceback.format_exc())
+    try:
+        render_sr_tab(sr_path, start_year, clip_q)
+    except Exception as exc:
+        st.error(f"Runtime error in `SR`: {exc}")
+        st.code(traceback.format_exc())
 
 elif selected_tab == "Activity":
-    load_activity = st.toggle(
-        "Load Activity data",
-        value=False,
-        key="load_activity_data",
-        help="Enable to load Activity parquet for this tab.",
-    )
-    if not load_activity:
-        st.info("Enable `Load Activity data` to display this tab.")
-    else:
-        try:
-            render_activity_tab(activity_path)
-        except Exception as exc:
-            st.error(f"Runtime error in `Activity`: {exc}")
-            st.code(traceback.format_exc())
+    try:
+        render_activity_tab(activity_path)
+    except Exception as exc:
+        st.error(f"Runtime error in `Activity`: {exc}")
+        st.code(traceback.format_exc())
 
 else:
-    load_handoff = st.toggle(
-        "Load Handoffs & History data",
-        value=False,
-        key="load_handoff_data",
-        help="Enable to load Handoffs and History parquet files for this tab.",
-    )
-    if not load_handoff:
-        st.info("Enable `Load Handoffs & History data` to display this tab.")
-    else:
-        try:
-            render_handoffs_history_tab(
-                activity_graph_path,
-                history_sr_path,
-                network_html_path,
-                sr_path,
-                activity_fallback_path=activity_path,
-            )
-        except Exception as exc:
-            st.error(f"Runtime error in `Handoffs & History SR`: {exc}")
-            st.code(traceback.format_exc())
+    try:
+        render_handoffs_history_tab(
+            activity_graph_path,
+            history_sr_path,
+            network_html_path,
+            sr_path,
+            activity_fallback_path=activity_path,
+        )
+    except Exception as exc:
+        st.error(f"Runtime error in `Handoffs & History SR`: {exc}")
+        st.code(traceback.format_exc())
