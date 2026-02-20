@@ -1008,27 +1008,36 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     col_a, col_b, col_c, col_d = st.columns(4)
 
     with col_a:
-        cat_vals = sorted(df["CATEGORY_NAME"].dropna().unique().tolist()) if "CATEGORY_NAME" in df.columns else []
+        cat_vals = sorted(df["CATEGORY_NAME"].dropna().astype(str).unique().tolist()) if "CATEGORY_NAME" in df.columns else []
         cat_sel = st.multiselect("Category", cat_vals, default=[], key="sr_category")
     with col_b:
-        prio_vals = sorted(df["PRIORITY_ID"].dropna().unique().tolist()) if "PRIORITY_ID" in df.columns else []
+        if "PRIORITY_ID" in df.columns:
+            prio_vals = sorted(pd.to_numeric(df["PRIORITY_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+        else:
+            prio_vals = []
         prio_sel = st.multiselect("Priority", prio_vals, default=[], key="sr_priority")
     with col_c:
-        status_vals = sorted(df["STATUS_ID"].dropna().unique().tolist()) if "STATUS_ID" in df.columns else []
+        if "STATUS_ID" in df.columns:
+            status_vals = sorted(pd.to_numeric(df["STATUS_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+        else:
+            status_vals = []
         status_sel = st.multiselect("Status", status_vals, default=[], key="sr_status")
     with col_d:
-        desk_vals = sorted(df["JUR_DESK_ID"].dropna().unique().tolist()) if "JUR_DESK_ID" in df.columns else []
+        if "JUR_DESK_ID" in df.columns:
+            desk_vals = sorted(pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+        else:
+            desk_vals = []
         desk_sel = st.multiselect("Desk", desk_vals, default=[], key="sr_desk")
 
     mask = pd.Series(True, index=df.index)
     if cat_sel and "CATEGORY_NAME" in df.columns:
-        mask &= df["CATEGORY_NAME"].isin(cat_sel)
+        mask &= df["CATEGORY_NAME"].astype(str).isin(cat_sel)
     if prio_sel and "PRIORITY_ID" in df.columns:
-        mask &= df["PRIORITY_ID"].isin(prio_sel)
+        mask &= pd.to_numeric(df["PRIORITY_ID"], errors="coerce").isin(prio_sel)
     if status_sel and "STATUS_ID" in df.columns:
-        mask &= df["STATUS_ID"].isin(status_sel)
+        mask &= pd.to_numeric(df["STATUS_ID"], errors="coerce").isin(status_sel)
     if desk_sel and "JUR_DESK_ID" in df.columns:
-        mask &= df["JUR_DESK_ID"].isin(desk_sel)
+        mask &= pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").isin(desk_sel)
     df_f = df.loc[mask].copy()
 
     if "IS_CLOSED" in df_f.columns:
