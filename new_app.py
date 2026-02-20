@@ -1,7 +1,6 @@
 import os
 import hashlib
 import html
-import gc
 import re
 import textwrap
 import traceback
@@ -119,30 +118,6 @@ st.markdown(
             background: var(--bnp-primary) !important;
             color: #ffffff !important;
             border-color: var(--bnp-primary) !important;
-        }}
-        /* Style the first radio widget as green "tabs" (dashboard tab selector). */
-        [data-testid="stRadio"]:first-of-type div[role="radiogroup"] {{
-            gap: 8px;
-        }}
-        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] {{
-            background: #e8f4f0;
-            border: 1px solid #d3e7e0;
-            border-radius: 10px;
-            padding: 6px 14px;
-        }}
-        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] > div:first-child {{
-            display: none;
-        }}
-        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] p {{
-            color: var(--bnp-dark);
-            margin: 0;
-        }}
-        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"]:has(input:checked) {{
-            background: var(--bnp-primary);
-            border-color: var(--bnp-primary);
-        }}
-        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"]:has(input:checked) p {{
-            color: #ffffff !important;
         }}
         [data-testid="stExpander"] {{
             border: 1px solid #d3e7e0;
@@ -2446,46 +2421,24 @@ with st.sidebar:
         "Path to routing network HTML",
         value=os.getenv("ROUTING_HTML_PATH", "activity_routing_network.html"),
     )
-    st.header("Performance")
-    auto_clear_cache_on_tab_switch = st.toggle(
-        "Auto clear cache on tab switch",
-        value=False,
-        key="auto_clear_cache_on_tab_switch",
-        help="Clears Streamlit cache when switching dashboard tab to reduce memory pressure.",
-    )
 
-selected_tab = st.radio(
-    "Dashboard tab",
-    options=["SR", "Activity", "Handoffs & History SR"],
-    horizontal=True,
-    key="dashboard_tab",
-)
+tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
 
-prev_tab = st.session_state.get("_previous_dashboard_tab")
-if prev_tab is None:
-    st.session_state["_previous_dashboard_tab"] = selected_tab
-elif prev_tab != selected_tab:
-    if auto_clear_cache_on_tab_switch:
-        st.cache_data.clear()
-        gc.collect()
-        st.info(f"Cache cleared after tab switch: `{prev_tab}` -> `{selected_tab}`")
-    st.session_state["_previous_dashboard_tab"] = selected_tab
-
-if selected_tab == "SR":
+with tab_sr:
     try:
         render_sr_tab(sr_path, start_year, clip_q)
     except Exception as exc:
         st.error(f"Runtime error in `SR`: {exc}")
         st.code(traceback.format_exc())
 
-elif selected_tab == "Activity":
+with tab_activity:
     try:
         render_activity_tab(activity_path)
     except Exception as exc:
         st.error(f"Runtime error in `Activity`: {exc}")
         st.code(traceback.format_exc())
 
-else:
+with tab_handoff_history:
     try:
         render_handoffs_history_tab(
             activity_graph_path,
