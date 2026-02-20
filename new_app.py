@@ -32,7 +32,6 @@ _CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
 _CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "200000"))
 _CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
 _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "200000"))
-_LARGE_FILE_SAFE_MB = int(os.getenv("LARGE_FILE_SAFE_MB", "200"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -122,13 +121,6 @@ def fmt_days(value: float) -> str:
 
 def wrap_label(value: str, width: int = 30) -> str:
     return "\n".join(textwrap.wrap(str(value), width))
-
-
-def file_size_mb(path: str) -> float | None:
-    try:
-        return Path(path).stat().st_size / (1024 * 1024)
-    except Exception:
-        return None
 
 
 def coerce_binary_metric(series: pd.Series) -> pd.Series:
@@ -1088,23 +1080,44 @@ def plot_overdue_by_category(overdue_df: pd.DataFrame) -> go.Figure:
 
 def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     st.subheader("Service Requests")
-    sr_file_mb = file_size_mb(path)
-    sr_safe_mode = _IS_STREAMLIT_CLOUD or (sr_file_mb is not None and sr_file_mb >= _LARGE_FILE_SAFE_MB)
-
-    sr_columns_base = (
-        "ID", "SR_ID", "SRNUMBER", "CATEGORY_NAME", "PRIORITY_ID", "STATUS_ID", "JUR_DESK_ID",
-        "CREATIONDATE", "CLOSINGDATE", "IS_CLOSED", "OVERDUE_FLAG_ASOF", "ACK_ON_TIME", "FR_ON_TIME",
-        "DUE_DATE", "OVERDUE_DAYS_ASOF", "CLOSE_DELAY_D", "ACK_DELAY_H", "FR_DELAY_H",
-        "ACK_ONTIME", "FIRST_RESPONSE_ON_TIME", "FR_ONTIME", "IS_ACK_ON_TIME", "IS_FR_ON_TIME",
-        "ACK_SLA_MET", "FR_SLA_MET", "FIRST_RESPONSE_SLA_MET", "FIRST_RESPONSE_DELAY_H",
+    sr_columns = (
+        "ID",
+        "SR_ID",
+        "SRNUMBER",
+        "CATEGORY_NAME",
+        "PRIORITY_ID",
+        "STATUS_ID",
+        "JUR_DESK_ID",
+        "CREATIONDATE",
+        "CLOSINGDATE",
+        "IS_CLOSED",
+        "OVERDUE_FLAG_ASOF",
+        "ACK_ON_TIME",
+        "FR_ON_TIME",
+        "DUE_DATE",
+        "OVERDUE_DAYS_ASOF",
+        "CLOSE_DELAY_D",
+        "ACK_DELAY_H",
+        "FR_DELAY_H",
+        "ACK_ONTIME",
+        "FIRST_RESPONSE_ON_TIME",
+        "FR_ONTIME",
+        "IS_ACK_ON_TIME",
+        "IS_FR_ON_TIME",
+        "ACK_SLA_MET",
+        "FR_SLA_MET",
+        "FIRST_RESPONSE_SLA_MET",
+        "FIRST_RESPONSE_DELAY_H",
+        "REOPEN_COUNT",
+        "REOPENING_COUNT",
+        "N_REOPEN",
+        "NB_REOPEN",
+        "NUMBER_OF_REOPENINGS",
+        "IS_REOPENED",
+        "REOPEN_DATE",
     )
-    sr_columns_reopen = (
-        "REOPEN_COUNT", "REOPENING_COUNT", "N_REOPEN", "NB_REOPEN", "NUMBER_OF_REOPENINGS",
-        "IS_REOPENED", "REOPEN_DATE",
-    )
-    sr_columns = sr_columns_base if sr_safe_mode else (sr_columns_base + sr_columns_reopen)
     try:
-        sr_max_rows = _CLOUD_SR_MAX_ROWS if sr_safe_mode else None
+        sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
         df = load_parquet(path, columns=sr_columns, max_rows=sr_max_rows)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
@@ -1113,9 +1126,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         st.error(f"Cannot load `{path}`: {exc}")
         return
 
-    if sr_safe_mode:
-        size_txt = f"{sr_file_mb:.0f} MB" if sr_file_mb is not None else "unknown size"
-        st.caption(f"SR safe mode enabled ({size_txt}, {len(df):,} rows loaded with minimal schema).")
+    st.caption(f"Loaded SR rows: {len(df):,}")
     if df.empty:
         st.warning("No SR rows could be loaded from this source.")
         return
@@ -1205,133 +1216,106 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         if sources:
             st.caption("KPI source fallback: " + " · ".join(sources))
 
-    show_sr_charts = st.toggle(
-        "Show SR charts",
-        value=not sr_safe_mode,
-        key="sr_show_charts",
-        help="Disable charts in safe mode to reduce memory usage.",
-    )
-    if show_sr_charts:
-        st.divider()
-        chart_df = df_f.head(200000) if sr_safe_mode else df_f
-        left, right = st.columns([2, 1])
-        with left:
-            ts = weekly_ts(chart_df, clip_q=clip_q)
-            if ts.empty:
-                st.info("No weekly data to display.")
-            else:
-                fig = px.line(
-                    ts,
-                    x="week",
-                    y=["created", "closed"],
-                    title="Created vs Closed (weekly)",
-                    template=_TEMPLATE,
-                    color_discrete_sequence=[_BNP_PRIMARY, _BNP_SOFT],
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                fig2 = px.line(
-                    ts,
-                    x="week",
-                    y="backlog_estimated",
-                    title="Estimated backlog (cumulative created - closed)",
-                    template=_TEMPLATE,
-                    color_discrete_sequence=[_BNP_DARK],
-                )
-                st.plotly_chart(fig2, use_container_width=True)
-
-        with right:
-            if "CATEGORY_NAME" in chart_df.columns and "OVERDUE_FLAG_ASOF" in chart_df.columns:
-                id_col = "ID" if "ID" in df_f.columns else "CATEGORY_NAME"
-                by_cat = (
-                    chart_df.groupby("CATEGORY_NAME")
-                    .agg(n=(id_col, "count"), overdue_rate=("OVERDUE_FLAG_ASOF", "mean"))
-                    .reset_index()
-                )
-                by_cat["overdue_volume"] = by_cat["n"] * by_cat["overdue_rate"]
-                top = by_cat.sort_values("overdue_volume", ascending=False).head(15)
-                fig4 = px.bar(
-                    top,
-                    x="overdue_volume",
-                    y=top["CATEGORY_NAME"].astype(str),
-                    orientation="h",
-                    title="Top 15 categories by overdue volume",
-                    template=_TEMPLATE,
-                    color_discrete_sequence=[_BNP_MID],
-                )
-                st.plotly_chart(fig4, use_container_width=True)
-
-            reopen_df = chart_df
-            reopen_dist, reopen_source = reopen_distribution(reopen_df)
-            if reopen_dist.empty and sr_safe_mode:
-                reopen_df = attach_reopen_columns(
-                    reopen_df,
-                    path,
-                    max_rows=min(sr_max_rows or _CLOUD_SR_REOPEN_MAX_ROWS, _CLOUD_SR_REOPEN_MAX_ROWS),
-                )
-                reopen_dist, reopen_source = reopen_distribution(reopen_df)
-            if not reopen_dist.empty:
-                fig5 = px.bar(
-                    reopen_dist,
-                    x="reopen_count_label",
-                    y="tickets",
-                    text=reopen_dist["share"].map(lambda v: f"{v:.1%}"),
-                    title="Ticket reopen count distribution",
-                    template=_TEMPLATE,
-                    color_discrete_sequence=[_COLOR_A],
-                )
-                fig5.update_traces(textposition="outside", cliponaxis=False)
-                fig5.update_xaxes(title="Number of reopenings", type="category")
-                fig5.update_yaxes(title="Ticket count")
-                fig5.update_layout(margin=dict(l=0, r=30, t=60, b=10))
-                st.plotly_chart(fig5, use_container_width=True)
-            elif sr_safe_mode:
-                st.caption("Ticket reopen distribution unavailable in sampled SR data.")
-    else:
-        st.caption("SR charts disabled. KPIs and sample rows remain available.")
-            
-
-    show_sr_table = st.toggle(
-        "Show SR sample table",
-        value=not sr_safe_mode,
-        key="sr_show_table",
-        help="Enable table rendering when needed. Disabled by default in safe mode.",
-    )
-    if show_sr_table:
-        st.divider()
-        st.subheader("Sample rows (drill-down)")
-        show_cols = [
-            c
-            for c in [
-                "ID",
-                "SRNUMBER",
-                "CATEGORY_NAME",
-                "PRIORITY_ID",
-                "STATUS_ID",
-                "CREATIONDATE",
-                "CLOSINGDATE",
-                "DUE_DATE",
-                "OVERDUE_FLAG_ASOF",
-                "OVERDUE_DAYS_ASOF",
-                "CLOSE_DELAY_D",
-                "ACK_DELAY_H",
-                "FR_DELAY_H",
-            ]
-            if c in df_f.columns
-        ]
-        if show_cols:
-            table_rows = 80 if sr_safe_mode else 500
-            table_df = df_f[show_cols].head(table_rows).copy()
-            if sr_safe_mode:
-                table_df = table_df.astype(str)
-            st.dataframe(table_df, width="stretch", hide_index=True)
+    st.divider()
+    chart_df = df_f
+    left, right = st.columns([2, 1])
+    with left:
+        ts = weekly_ts(chart_df, clip_q=clip_q)
+        if ts.empty:
+            st.info("No weekly data to display.")
         else:
-            table_rows = 80 if sr_safe_mode else 500
-            table_df = df_f.head(table_rows).copy()
-            if sr_safe_mode:
-                table_df = table_df.astype(str)
-            st.dataframe(table_df, width="stretch", hide_index=True)
+            fig = px.line(
+                ts,
+                x="week",
+                y=["created", "closed"],
+                title="Created vs Closed (weekly)",
+                template=_TEMPLATE,
+                color_discrete_sequence=[_BNP_PRIMARY, _BNP_SOFT],
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            fig2 = px.line(
+                ts,
+                x="week",
+                y="backlog_estimated",
+                title="Estimated backlog (cumulative created - closed)",
+                template=_TEMPLATE,
+                color_discrete_sequence=[_BNP_DARK],
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+    with right:
+        if "CATEGORY_NAME" in chart_df.columns and "OVERDUE_FLAG_ASOF" in chart_df.columns:
+            id_col = "ID" if "ID" in chart_df.columns else "CATEGORY_NAME"
+            by_cat = (
+                chart_df.groupby("CATEGORY_NAME")
+                .agg(n=(id_col, "count"), overdue_rate=("OVERDUE_FLAG_ASOF", "mean"))
+                .reset_index()
+            )
+            by_cat["overdue_volume"] = by_cat["n"] * by_cat["overdue_rate"]
+            top = by_cat.sort_values("overdue_volume", ascending=False).head(15)
+            fig4 = px.bar(
+                top,
+                x="overdue_volume",
+                y=top["CATEGORY_NAME"].astype(str),
+                orientation="h",
+                title="Top 15 categories by overdue volume",
+                template=_TEMPLATE,
+                color_discrete_sequence=[_BNP_MID],
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+
+        reopen_df = chart_df
+        reopen_dist, reopen_source = reopen_distribution(reopen_df)
+        if reopen_dist.empty:
+            reopen_df = attach_reopen_columns(
+                reopen_df,
+                path,
+                max_rows=min(sr_max_rows or _CLOUD_SR_REOPEN_MAX_ROWS, _CLOUD_SR_REOPEN_MAX_ROWS),
+            )
+            reopen_dist, reopen_source = reopen_distribution(reopen_df)
+        if not reopen_dist.empty:
+            fig5 = px.bar(
+                reopen_dist,
+                x="reopen_count_label",
+                y="tickets",
+                text=reopen_dist["share"].map(lambda v: f"{v:.1%}"),
+                title="Ticket reopen count distribution",
+                template=_TEMPLATE,
+                color_discrete_sequence=[_COLOR_A],
+            )
+            fig5.update_traces(textposition="outside", cliponaxis=False)
+            fig5.update_xaxes(title="Number of reopenings", type="category")
+            fig5.update_yaxes(title="Ticket count")
+            fig5.update_layout(margin=dict(l=0, r=30, t=60, b=10))
+            st.plotly_chart(fig5, use_container_width=True)
+        else:
+            st.info("Ticket reopen distribution unavailable in current SR source.")
+
+    st.divider()
+    st.subheader("Sample rows (drill-down)")
+    show_cols = [
+        c
+        for c in [
+            "ID",
+            "SRNUMBER",
+            "CATEGORY_NAME",
+            "PRIORITY_ID",
+            "STATUS_ID",
+            "CREATIONDATE",
+            "CLOSINGDATE",
+            "DUE_DATE",
+            "OVERDUE_FLAG_ASOF",
+            "OVERDUE_DAYS_ASOF",
+            "CLOSE_DELAY_D",
+            "ACK_DELAY_H",
+            "FR_DELAY_H",
+        ]
+        if c in df_f.columns
+    ]
+    if show_cols:
+        st.dataframe(df_f[show_cols].head(500), width="stretch", hide_index=True)
     else:
-        st.caption("Sample table disabled.")
+        st.dataframe(df_f.head(500), width="stretch", hide_index=True)
 
 
 def render_activity_tab(path: str):
@@ -1745,7 +1729,7 @@ with st.sidebar:
     sr_path = st.text_input("Path to sr_enriched.parquet", value="sr_enriched.parquet")
 
     st.header("SR Filters")
-    start_year = st.selectbox("Start from year", options=[2024, 2025, 2026], index=1)
+    start_year = st.selectbox("Start from year", options=[2024, 2025, 2026], index=0)
     clip_outliers = st.checkbox("Clip extreme weekly peaks (recommended)", value=True)
     clip_q = 0.995 if clip_outliers else None
 
