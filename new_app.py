@@ -194,7 +194,7 @@ def option_values_int(df: pd.DataFrame, column: str, max_values: int = 200) -> l
 
 
 def normalize_data_source(path: str) -> str:
-    raw = str(path).strip()
+    raw = str(path).strip().strip("`'\"")
     if not raw:
         return raw
     if "drive.google.com" not in raw:
@@ -214,7 +214,7 @@ def normalize_data_source(path: str) -> str:
 
 
 def extract_drive_file_id(path: str) -> str | None:
-    raw = str(path).strip()
+    raw = str(path).strip().strip("`'\"")
     if "drive.google.com" not in raw:
         return None
     parsed = urlparse(raw)
@@ -231,8 +231,31 @@ def drive_download_candidates(path: str) -> list[str]:
         return [normalize_data_source(path)]
     return [
         f"https://drive.google.com/uc?export=download&id={file_id}",
+        f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}",
         f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
     ]
+
+
+def is_valid_parquet_file(path: Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < 8:
+            return False
+        with path.open("rb") as fh:
+            head = fh.read(4)
+            fh.seek(-4, os.SEEK_END)
+            tail = fh.read(4)
+        return head == b"PAR1" and tail == b"PAR1"
+    except Exception:
+        return False
+
+
+def read_text_head(path: Path, max_bytes: int = 4096) -> str:
+    try:
+        with path.open("rb") as fh:
+            blob = fh.read(max_bytes)
+        return blob.decode("utf-8", errors="ignore").lower()
+    except Exception:
+        return ""
 
 
 def localize_data_source(path: str, suffix: str = "") -> str:
@@ -247,17 +270,31 @@ def localize_data_source(path: str, suffix: str = "") -> str:
     local_path = cache_dir / f"{digest}{ext}"
 
     if local_path.exists() and local_path.stat().st_size > 0:
-        return str(local_path)
+        if suffix == ".parquet" and not is_valid_parquet_file(local_path):
+            local_path.unlink(missing_ok=True)
+        else:
+            return str(local_path)
 
     last_error: Exception | None = None
+    session = requests.Session()
     for candidate in drive_download_candidates(path):
         try:
-            with requests.get(candidate, stream=True, timeout=300) as resp:
+            with session.get(candidate, stream=True, timeout=300, allow_redirects=True) as resp:
                 resp.raise_for_status()
                 with local_path.open("wb") as fh:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             fh.write(chunk)
+
+            if suffix == ".parquet" and not is_valid_parquet_file(local_path):
+                txt_head = read_text_head(local_path)
+                local_path.unlink(missing_ok=True)
+                if "google" in txt_head and ("access" in txt_head or "permission" in txt_head):
+                    raise ValueError(
+                        "Downloaded Google Drive content is not a parquet file. "
+                        "Make sure the file is shared as 'Anyone with the link'."
+                    )
+                raise ValueError("Downloaded content is not a valid parquet file.")
             return str(local_path)
         except Exception as exc:
             last_error = exc
