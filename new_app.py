@@ -40,6 +40,16 @@ _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "50000"))
 _CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "15000"))
 _CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "15000"))
 _CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "30000"))
+_LOCAL_SR_MAX_ROWS = int(os.getenv("LOCAL_SR_MAX_ROWS", "120000"))
+_LOCAL_SR_CHART_MAX_ROWS = int(os.getenv("LOCAL_SR_CHART_MAX_ROWS", "15000"))
+_LOCAL_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("LOCAL_SR_REOPEN_DIST_MAX_ROWS", "15000"))
+_LOCAL_FILTER_SOURCE_MAX_ROWS = int(os.getenv("LOCAL_FILTER_SOURCE_MAX_ROWS", "30000"))
+_SR_MAX_ROWS = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_MAX_ROWS
+_SR_CHART_MAX_ROWS = _CLOUD_SR_CHART_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_CHART_MAX_ROWS
+_SR_REOPEN_DIST_MAX_ROWS = (
+    _CLOUD_SR_REOPEN_DIST_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_REOPEN_DIST_MAX_ROWS
+)
+_FILTER_SOURCE_MAX_ROWS = _CLOUD_FILTER_SOURCE_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_FILTER_SOURCE_MAX_ROWS
 
 _DEFAULT_SR_PATH = "https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link"
 _DEFAULT_ACTIVITY_PATH = "https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link"
@@ -282,13 +292,13 @@ def extract_drive_confirm_token(page_text: str) -> str | None:
     if not page_text:
         return None
     patterns = [
-        r"confirm=([0-9A-Za-z_\-]+)&amp;id=",
-        r"confirm=([0-9A-Za-z_\-]+)&id=",
-        r"confirm=([0-9A-Za-z_\-]+)&amp;",
-        r"confirm=([0-9A-Za-z_\-]+)&",
-        r'"confirm":"([0-9A-Za-z_\-]+)"',
-        r"name=\"confirm\" value=\"([0-9A-Za-z_\-]+)\"",
-        r"value=\"([0-9A-Za-z_\-]+)\" name=\"confirm\"",
+        r"confirm=([^&\"'\s]+)&amp;id=",
+        r"confirm=([^&\"'\s]+)&id=",
+        r"confirm=([^&\"'\s]+)&amp;",
+        r"confirm=([^&\"'\s]+)&",
+        r'"confirm":"([^"]+)"',
+        r"name=\"confirm\" value=\"([^\"]+)\"",
+        r"value=\"([^\"]+)\" name=\"confirm\"",
     ]
     for pattern in patterns:
         match = re.search(pattern, page_text)
@@ -318,6 +328,23 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
         if match:
             return match.group(0)
 
+    # Some Drive pages expose only relative links (e.g. href="/uc?export=download&...").
+    relative_match = re.search(
+        r"(?:href|action)=['\"](/uc\?[^\s\"'<>]+)['\"]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if relative_match:
+        return urljoin("https://drive.google.com", relative_match.group(1))
+
+    relative_download_match = re.search(
+        r"(?:href|action)=['\"](/download\?[^\s\"'<>]+)['\"]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if relative_download_match:
+        return urljoin("https://drive.usercontent.google.com", relative_download_match.group(1))
+
     action_match = re.search(r"<form[^>]+action=['\"]([^'\"]+)['\"][^>]*>", text, flags=re.IGNORECASE)
     if not action_match:
         return None
@@ -338,13 +365,14 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
     params: dict[str, str] = {}
     for tag in input_tags:
         # Parse attributes regardless of their order (name/value can appear in any order).
-        attrs = dict(
-            re.findall(
-                r"([A-Za-z_:][A-Za-z0-9_:\-]*)\s*=\s*['\"]([^'\"]*)['\"]",
-                tag,
-                flags=re.IGNORECASE,
-            )
-        )
+        attrs: dict[str, str] = {}
+        for attr_match in re.findall(
+            r"([A-Za-z_:][A-Za-z0-9_:\-]*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'=<>`]+))",
+            tag,
+            flags=re.IGNORECASE,
+        ):
+            key, v1, v2, v3 = attr_match
+            attrs[key] = v1 or v2 or v3
         attrs_l = {k.lower(): v for k, v in attrs.items()}
         name = attrs_l.get("name")
         value = attrs_l.get("value", "")
@@ -1623,12 +1651,14 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         "FIRST_RESPONSE_SLA_MET",
         "FIRST_RESPONSE_DELAY_H",
     )
-    sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
+    sr_max_rows = _SR_MAX_ROWS
     df = pd.DataFrame()
     last_exc: Exception | None = None
     load_caps = [sr_max_rows]
     if _IS_STREAMLIT_CLOUD:
         load_caps = [sr_max_rows, 10_000, 5_000]
+    else:
+        load_caps = [sr_max_rows, min(sr_max_rows, 80_000), 40_000]
     seen_caps: set[int | None] = set()
     for cap in load_caps:
         if cap in seen_caps:
@@ -1646,8 +1676,9 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     if df.empty and last_exc is not None:
         st.error(f"Cannot load `{path}`: {last_exc}")
         return
-    if _IS_STREAMLIT_CLOUD and sr_max_rows is not None:
-        st.caption(f"Cloud safe load cap: {sr_max_rows:,} rows")
+    if sr_max_rows is not None:
+        mode = "Cloud" if _IS_STREAMLIT_CLOUD else "Local"
+        st.caption(f"{mode} safe load cap: {sr_max_rows:,} rows")
 
     st.caption(f"Loaded SR rows: {len(df):,}")
     if df.empty:
@@ -1667,8 +1698,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         return
 
     filter_source = df
-    if _IS_STREAMLIT_CLOUD and len(df) > _CLOUD_FILTER_SOURCE_MAX_ROWS:
-        filter_source = df.sample(n=_CLOUD_FILTER_SOURCE_MAX_ROWS, random_state=42)
+    if len(df) > _FILTER_SOURCE_MAX_ROWS:
+        filter_source = df.sample(n=_FILTER_SOURCE_MAX_ROWS, random_state=42)
         st.caption(
             f"Filter options built from a {len(filter_source):,} row sample for stability."
         )
@@ -1705,7 +1736,9 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     else:
         if "CLOSINGDATE" in df_f.columns:
             df_f["CLOSINGDATE"] = pd.to_datetime(df_f["CLOSINGDATE"], errors="coerce")
-        is_closed_rate = df_f["CLOSINGDATE"].notna().astype(float)
+            is_closed_rate = df_f["CLOSINGDATE"].notna().astype(float)
+        else:
+            is_closed_rate = pd.Series(np.nan, index=df_f.index, dtype=float)
 
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
     ack_rate, ack_source = resolve_on_time_metric(
@@ -1741,18 +1774,18 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
 
     show_sr_charts = st.toggle(
         "Show SR charts",
-        value=not _IS_STREAMLIT_CLOUD,
+        value=False,
         key="sr_show_charts",
-        help="Disable in cloud if the process crashes after KPI computation.",
+        help="Enable only if needed. Keeping this off reduces crash risk on large datasets.",
     )
     if show_sr_charts:
         st.divider()
         chart_cols = [c for c in ["ID", "SR_ID", "CREATIONDATE", "CLOSINGDATE", "CATEGORY_NAME", "OVERDUE_FLAG_ASOF"] if c in df_f.columns]
         chart_df = df_f[chart_cols]
-        if _IS_STREAMLIT_CLOUD and len(chart_df) > _CLOUD_SR_CHART_MAX_ROWS:
-            chart_df = chart_df.sample(n=_CLOUD_SR_CHART_MAX_ROWS, random_state=42)
+        if len(chart_df) > _SR_CHART_MAX_ROWS:
+            chart_df = chart_df.sample(n=_SR_CHART_MAX_ROWS, random_state=42)
             st.caption(
-                f"SR charts computed on a {len(chart_df):,} row sample to prevent cloud memory crash."
+                f"SR charts computed on a {len(chart_df):,} row sample for stability."
             )
         left, right = st.columns([2, 1])
         with left:
@@ -1819,8 +1852,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 if c in df_f.columns
             ]
             reopen_df = df_f[reopen_cols] if reopen_cols else chart_df
-            if _IS_STREAMLIT_CLOUD and len(reopen_df) > _CLOUD_SR_REOPEN_DIST_MAX_ROWS:
-                reopen_df = reopen_df.sample(n=_CLOUD_SR_REOPEN_DIST_MAX_ROWS, random_state=42)
+            if len(reopen_df) > _SR_REOPEN_DIST_MAX_ROWS:
+                reopen_df = reopen_df.sample(n=_SR_REOPEN_DIST_MAX_ROWS, random_state=42)
             reopen_dist, reopen_source = reopen_distribution(reopen_df)
             if reopen_dist.empty and not _IS_STREAMLIT_CLOUD:
                 reopen_df = attach_reopen_columns(
@@ -1849,9 +1882,9 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
 
     show_sr_table = st.toggle(
         "Show SR sample table",
-        value=not _IS_STREAMLIT_CLOUD,
+        value=False,
         key="sr_show_table",
-        help="Disable in cloud if rendering the table causes instability.",
+        help="Enable only if needed. Keeping this off reduces memory usage.",
     )
     if show_sr_table:
         st.divider()
@@ -2075,6 +2108,7 @@ def render_handoffs_history_tab(
     history_sr_path: str,
     network_html_path: str,
     sr_enriched_path: str,
+    activity_fallback_path: str | None = None,
 ):
     st.subheader("Handoffs & History SR")
     if _IS_STREAMLIT_CLOUD:
@@ -2084,14 +2118,43 @@ def render_handoffs_history_tab(
         )
     
 
+    activity_df = pd.DataFrame()
+    activity_source_used = activity_graph_path
     try:
         activity_df = load_parquet(activity_graph_path)
-    except FileNotFoundError:
-        st.error(f"File not found: `{activity_graph_path}`")
-        return
-    except Exception as exc:
-        st.error(f"Cannot load `{activity_graph_path}`: {exc}")
-        return
+    except Exception as graph_exc:
+        can_try_fallback = (
+            activity_fallback_path is not None
+            and str(activity_fallback_path).strip()
+            and str(activity_fallback_path).strip() != str(activity_graph_path).strip()
+        )
+        if can_try_fallback:
+            try:
+                activity_df = load_parquet(activity_fallback_path)
+                activity_source_used = activity_fallback_path
+                st.warning(
+                    "Primary handoff source is unavailable. "
+                    f"Falling back to activity source: `{activity_fallback_path}`"
+                )
+            except FileNotFoundError:
+                st.error(
+                    f"Cannot load `{activity_graph_path}` ({graph_exc}) "
+                    f"and fallback file not found: `{activity_fallback_path}`"
+                )
+                return
+            except Exception as fallback_exc:
+                st.error(
+                    f"Cannot load `{activity_graph_path}` ({graph_exc}) "
+                    f"and fallback `{activity_fallback_path}` ({fallback_exc})"
+                )
+                return
+        else:
+            if isinstance(graph_exc, FileNotFoundError):
+                st.error(f"File not found: `{activity_graph_path}`")
+            else:
+                st.error(f"Cannot load `{activity_graph_path}`: {graph_exc}")
+            return
+    st.caption(f"Handoff activity source: `{activity_source_used}`")
 
     sr_overdue_map = pd.DataFrame()
     overdue_available = False
@@ -2307,7 +2370,7 @@ with st.sidebar:
         value=os.getenv("ACTIVITY_PATH", _DEFAULT_ACTIVITY_PATH),
     )
     activity_graph_path = st.text_input(
-        "Path to Activity_Jan_to_Sept_graph.parquet",
+        "Path to Activity_Jan_to_Sept_graph.parquet (optional fallback to activity.parquet)",
         value=os.getenv("ACTIVITY_GRAPH_PATH", _DEFAULT_ACTIVITY_GRAPH_PATH),
     )
     history_sr_path = st.text_input(
@@ -2364,7 +2427,13 @@ with tab_handoff_history:
         st.info("Enable `Load Handoffs & History data` to display this tab.")
     else:
         try:
-            render_handoffs_history_tab(activity_graph_path, history_sr_path, network_html_path, sr_path)
+            render_handoffs_history_tab(
+                activity_graph_path,
+                history_sr_path,
+                network_html_path,
+                sr_path,
+                activity_fallback_path=activity_path,
+            )
         except Exception as exc:
             st.error(f"Runtime error in `Handoffs & History SR`: {exc}")
             st.code(traceback.format_exc())
