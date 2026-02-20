@@ -30,7 +30,8 @@ _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
 _IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
 _CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "30000"))
 _CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "150000"))
-_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "1200"))
+_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
+_CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "30000"))
 _LARGE_FILE_SAFE_MB = int(os.getenv("LARGE_FILE_SAFE_MB", "200"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
@@ -1195,7 +1196,11 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             reopen_df = chart_df
             reopen_dist, reopen_source = reopen_distribution(reopen_df)
             if reopen_dist.empty and sr_safe_mode:
-                reopen_df = attach_reopen_columns(reopen_df, path, max_rows=sr_max_rows)
+                reopen_df = attach_reopen_columns(
+                    reopen_df,
+                    path,
+                    max_rows=min(sr_max_rows or _CLOUD_SR_REOPEN_MAX_ROWS, _CLOUD_SR_REOPEN_MAX_ROWS),
+                )
                 reopen_dist, reopen_source = reopen_distribution(reopen_df)
             if not reopen_dist.empty:
                 fig5 = px.bar(
