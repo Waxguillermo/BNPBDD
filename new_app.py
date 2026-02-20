@@ -194,47 +194,66 @@ def option_values_int(df: pd.DataFrame, column: str, max_values: int = 200) -> l
     return sorted(s.astype(int).unique().tolist())[:max_values]
 
 
+def clean_data_source(path: str) -> str:
+    return str(path).strip().strip("`'\"")
+
+
+def extract_drive_link_info(path: str) -> tuple[str | None, str | None]:
+    raw = clean_data_source(path)
+    if "drive.google.com" not in raw and "drive.usercontent.google.com" not in raw:
+        return None, None
+
+    parsed = urlparse(raw)
+    query = parse_qs(parsed.query)
+    resource_key = query.get("resourcekey", [None])[0]
+    file_id = query.get("id", [None])[0]
+
+    path_patterns = [
+        r"/file/d/([^/]+)",
+        r"/document/d/([^/]+)",
+        r"/spreadsheets/d/([^/]+)",
+        r"/presentation/d/([^/]+)",
+        r"/forms/d/([^/]+)",
+    ]
+    for pattern in path_patterns:
+        match = re.search(pattern, parsed.path)
+        if match:
+            file_id = match.group(1)
+            break
+
+    return file_id, resource_key
+
+
 def normalize_data_source(path: str) -> str:
-    raw = str(path).strip().strip("`'\"")
+    raw = clean_data_source(path)
     if not raw:
         return raw
-    if "drive.google.com" not in raw:
-        return raw
-
-    parsed = urlparse(raw)
-    file_id = None
-    match = re.search(r"/file/d/([^/]+)", parsed.path)
-    if match:
-        file_id = match.group(1)
-    else:
-        query = parse_qs(parsed.query)
-        file_id = query.get("id", [None])[0]
+    file_id, resource_key = extract_drive_link_info(raw)
     if not file_id:
         return raw
-    return f"https://drive.google.com/uc?export=download&id={file_id}"
 
-
-def extract_drive_file_id(path: str) -> str | None:
-    raw = str(path).strip().strip("`'\"")
-    if "drive.google.com" not in raw:
-        return None
-    parsed = urlparse(raw)
-    match = re.search(r"/file/d/([^/]+)", parsed.path)
-    if match:
-        return match.group(1)
-    query = parse_qs(parsed.query)
-    return query.get("id", [None])[0]
+    params = {"export": "download", "id": file_id}
+    if resource_key:
+        params["resourcekey"] = resource_key
+    return f"https://drive.google.com/uc?{urlencode(params)}"
 
 
 def drive_download_candidates(path: str) -> list[str]:
-    file_id = extract_drive_file_id(path)
+    file_id, resource_key = extract_drive_link_info(path)
     if not file_id:
         return [normalize_data_source(path)]
-    return [
-        f"https://drive.google.com/uc?export=download&id={file_id}",
-        f"https://drive.google.com/uc?export=download&confirm=t&id={file_id}",
-        f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
+
+    base_params = {"export": "download", "id": file_id}
+    if resource_key:
+        base_params["resourcekey"] = resource_key
+
+    urls = [
+        f"https://drive.google.com/uc?{urlencode(base_params)}",
+        f"https://drive.google.com/uc?{urlencode(dict(base_params, confirm='t'))}",
+        f"https://drive.usercontent.google.com/download?{urlencode(dict(base_params, confirm='t'))}",
     ]
+    # Keep stable order while removing duplicates.
+    return list(dict.fromkeys(urls))
 
 
 def is_valid_parquet_file(path: Path) -> bool:
@@ -319,7 +338,7 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
 
     params: dict[str, str] = {}
     for name, value in pairs:
-        if name in {"id", "export", "confirm", "uuid", "at", "authuser"} and value:
+        if name in {"id", "export", "confirm", "uuid", "at", "authuser", "resourcekey"} and value:
             params[name] = value
     if file_id and "id" not in params:
         params["id"] = file_id
@@ -349,9 +368,18 @@ def download_to_file(session: requests.Session, url: str, target: Path):
 
 
 def localize_data_source(path: str, suffix: str = "") -> str:
-    src = normalize_data_source(path)
+    raw_path = clean_data_source(path)
+    src = normalize_data_source(raw_path)
     if not src.startswith(("http://", "https://")):
         return src
+
+    parsed_raw = urlparse(raw_path)
+    drive_file_id, drive_resource_key = extract_drive_link_info(raw_path)
+    if "drive.google.com" in raw_path and drive_file_id is None and "/folders/" in parsed_raw.path:
+        raise ValueError(
+            "Google Drive folder link detected. Use a direct file share link "
+            "(example: https://drive.google.com/file/d/<FILE_ID>/view)."
+        )
 
     cache_dir = Path("/tmp/bnp_data_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -376,8 +404,8 @@ def localize_data_source(path: str, suffix: str = "") -> str:
             )
         }
     )
-    file_id = extract_drive_file_id(path)
-    for candidate in drive_download_candidates(path):
+    file_id = drive_file_id
+    for candidate in drive_download_candidates(raw_path):
         try:
             download_to_file(session, candidate, local_path)
 
@@ -400,13 +428,24 @@ def localize_data_source(path: str, suffix: str = "") -> str:
                 if not confirm_token:
                     confirm_token = cookie_token
                 if confirm_token and file_id:
-                    confirm_url = f"https://drive.google.com/uc?export=download&confirm={confirm_token}&id={file_id}"
+                    confirm_params = {"export": "download", "confirm": confirm_token, "id": file_id}
+                    if drive_resource_key:
+                        confirm_params["resourcekey"] = drive_resource_key
+                    confirm_url = f"https://drive.google.com/uc?{urlencode(confirm_params)}"
                     download_to_file(session, confirm_url, local_path)
                     if is_valid_parquet_file(local_path):
                         return str(local_path)
                     txt_head = read_text_head(local_path, max_bytes=256 * 1024)
                     local_path.unlink(missing_ok=True)
                 txt_head_l = txt_head.lower()
+                if (
+                    "google" in txt_head_l
+                    and ("sign in" in txt_head_l or "accounts.google.com" in txt_head_l)
+                ):
+                    raise ValueError(
+                        "Google Drive requires sign-in for this file. "
+                        "Share it as 'Anyone with the link' and retry."
+                    )
                 if "google" in txt_head_l and ("access" in txt_head_l or "permission" in txt_head_l):
                     raise ValueError(
                         "Downloaded Google Drive content is not a parquet file. "
@@ -2236,7 +2275,10 @@ st.title("BNP Paribas Head Of Operations Dashboard")
 
 with st.sidebar:
     st.header("SR Data")
-    st.caption("You can use a local path or a public URL (Google Drive share link supported).")
+    st.caption(
+        "Use a local path or a public URL. For Google Drive, use a FILE link "
+        "(not a folder) shared as 'Anyone with the link'."
+    )
     sr_path = st.text_input(
         "Path to sr_enriched.parquet",
         value=os.getenv("SR_PATH", _DEFAULT_SR_PATH),
