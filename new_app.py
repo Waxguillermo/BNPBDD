@@ -1107,6 +1107,190 @@ def plot_overdue_by_category(overdue_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def build_activity_sla_watchlist(
+    df: pd.DataFrame,
+    sla_quantile: float,
+    soon_days: int,
+    resolution_base: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    if df.empty or "CREATIONDATE" not in df.columns:
+        return pd.DataFrame()
+
+    open_df = df.copy()
+    if "CLOSINGDATE" in open_df.columns:
+        open_df = open_df[open_df["CLOSINGDATE"].isna()].copy()
+    if open_df.empty:
+        return pd.DataFrame()
+
+    open_df["CREATIONDATE"] = pd.to_datetime(open_df["CREATIONDATE"], errors="coerce")
+    open_df = open_df[open_df["CREATIONDATE"].notna()].copy()
+    if open_df.empty:
+        return pd.DataFrame()
+
+    if resolution_base is None:
+        resolution_base = activity_resolution_base(df)
+    if resolution_base.empty:
+        fallback_sla_days = 5.0
+        sla_by_cat = pd.Series(dtype=float)
+    else:
+        fallback_sla_days = float(resolution_base["resolve_days"].quantile(sla_quantile))
+        if pd.isna(fallback_sla_days):
+            fallback_sla_days = 5.0
+        sla_by_cat = resolution_base.groupby("CATEGORY_NAME")["resolve_days"].quantile(sla_quantile)
+
+    if "DUE_DATE" in open_df.columns:
+        open_df["due_actual"] = pd.to_datetime(open_df["DUE_DATE"], errors="coerce")
+    else:
+        open_df["due_actual"] = pd.NaT
+
+    if "CATEGORY_NAME" in open_df.columns and not sla_by_cat.empty:
+        sla_days = open_df["CATEGORY_NAME"].map(sla_by_cat).astype(float)
+    else:
+        sla_days = pd.Series(np.nan, index=open_df.index, dtype=float)
+    sla_days = sla_days.fillna(fallback_sla_days).clip(lower=0.1, upper=90)
+    open_df["due_pred"] = open_df["CREATIONDATE"] + pd.to_timedelta(sla_days, unit="D")
+    open_df["due_effective"] = open_df["due_actual"].where(open_df["due_actual"].notna(), open_df["due_pred"])
+
+    open_df = open_df[open_df["due_effective"].notna()].copy()
+    if open_df.empty:
+        return pd.DataFrame()
+
+    now = pd.Timestamp.now()
+    open_df["days_to_sla"] = (open_df["due_effective"] - now).dt.total_seconds() / 86400
+    open_df["sla_status"] = np.where(
+        open_df["days_to_sla"] < 0,
+        "Breached",
+        np.where(open_df["days_to_sla"] <= soon_days, "Soon", "On track"),
+    )
+    open_df = open_df[open_df["sla_status"].isin(["Breached", "Soon"])].copy()
+    if open_df.empty:
+        return pd.DataFrame()
+
+    id_num = pd.to_numeric(open_df["ID"], errors="coerce") if "ID" in open_df.columns else pd.Series(np.nan, index=open_df.index)
+    sr_num = pd.to_numeric(open_df["SR_ID"], errors="coerce") if "SR_ID" in open_df.columns else pd.Series(np.nan, index=open_df.index)
+    id_part = id_num.astype("Int64").astype(str)
+    sr_part = sr_num.astype("Int64").astype(str)
+    open_df["ticket_key"] = np.where(
+        id_num.notna(),
+        "ID:" + id_part,
+        np.where(sr_num.notna(), "SR:" + sr_part, "IDX:" + open_df.index.astype(str)),
+    )
+
+    open_df["days_to_sla"] = open_df["days_to_sla"].round(2)
+    open_df["sla_source"] = np.where(open_df["due_actual"].notna(), "DUE_DATE", f"Model P{int(sla_quantile * 100)}")
+    open_df["sla_deadline"] = open_df["due_effective"].dt.strftime("%Y-%m-%d %H:%M")
+    open_df["created_on"] = open_df["CREATIONDATE"].dt.strftime("%Y-%m-%d %H:%M")
+    open_df["due_actual_str"] = open_df["due_actual"].dt.strftime("%Y-%m-%d %H:%M")
+
+    open_df["urgency_rank"] = np.where(open_df["sla_status"] == "Breached", 0, 1)
+    return open_df.sort_values(["urgency_rank", "days_to_sla"]).drop(columns=["urgency_rank"])
+
+
+def render_activity_ticket_board(
+    df: pd.DataFrame,
+    sla_quantile: float,
+    resolution_base: pd.DataFrame | None = None,
+):
+    st.markdown("#### Ticket Management — SLA Watchlist")
+    soon_days = st.slider(
+        "Soon threshold (days)",
+        min_value=1,
+        max_value=14,
+        value=3,
+        step=1,
+        key="activity_watchlist_soon_days",
+    )
+
+    watch_df = build_activity_sla_watchlist(
+        df,
+        sla_quantile=sla_quantile,
+        soon_days=soon_days,
+        resolution_base=resolution_base,
+    )
+    if watch_df.empty:
+        st.success("No open tickets are close to SLA breach (or already breached).")
+        return
+
+    discarded = set(st.session_state.get("activity_discarded_keys", []))
+    if discarded:
+        watch_df = watch_df[~watch_df["ticket_key"].isin(discarded)].copy()
+    if watch_df.empty:
+        st.info("All watchlist tickets are currently discarded.")
+        if st.button("Reset discarded tickets", key="activity_reset_discarded_empty"):
+            st.session_state["activity_discarded_keys"] = []
+            st.rerun()
+        return
+
+    table_cols = [
+        c
+        for c in [
+            "ticket_key",
+            "sla_status",
+            "days_to_sla",
+            "sla_deadline",
+            "sla_source",
+            "ID",
+            "SR_ID",
+            "CATEGORY_NAME",
+            "PRIORITY_ID",
+            "STATUS_ID",
+            "JUR_DESK_ID",
+            "created_on",
+            "due_actual_str",
+        ]
+        if c in watch_df.columns
+    ]
+    editor_df = watch_df[table_cols].copy()
+    editor_df["discard"] = False
+    editor_df["share"] = False
+
+    edited = st.data_editor(
+        editor_df,
+        hide_index=True,
+        width="stretch",
+        key="activity_watchlist_editor",
+        column_config={
+            "discard": st.column_config.CheckboxColumn("Discard"),
+            "share": st.column_config.CheckboxColumn("Share"),
+            "days_to_sla": st.column_config.NumberColumn("Days to SLA", format="%.2f"),
+            "sla_status": st.column_config.TextColumn("SLA status"),
+            "sla_deadline": st.column_config.TextColumn("SLA deadline"),
+            "created_on": st.column_config.TextColumn("Created on"),
+            "due_actual_str": st.column_config.TextColumn("Due date"),
+        },
+    )
+
+    action_left, action_mid, action_right = st.columns([1, 1, 2])
+    with action_left:
+        if st.button("Apply discard selection", key="activity_apply_discard"):
+            discard_keys = edited.loc[edited["discard"] == True, "ticket_key"].astype(str).tolist()
+            if discard_keys:
+                new_discarded = set(st.session_state.get("activity_discarded_keys", []))
+                new_discarded.update(discard_keys)
+                st.session_state["activity_discarded_keys"] = sorted(new_discarded)
+                st.rerun()
+            else:
+                st.info("No ticket selected for discard.")
+    with action_mid:
+        if st.button("Reset discarded", key="activity_reset_discarded"):
+            st.session_state["activity_discarded_keys"] = []
+            st.rerun()
+    with action_right:
+        share_df = edited.loc[edited["share"] == True].copy()
+        if not share_df.empty:
+            export_cols = [c for c in share_df.columns if c not in ["discard", "share"]]
+            csv_payload = share_df[export_cols].to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Share selected tickets (CSV)",
+                data=csv_payload,
+                file_name="activity_sla_watchlist.csv",
+                mime="text/csv",
+                key="activity_share_watchlist_csv",
+            )
+        else:
+            st.caption("Select rows in `Share` to export them.")
+
+
 def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     st.subheader("Service Requests")
     sr_columns = (
@@ -1388,6 +1572,8 @@ def render_activity_tab(path: str):
         "ID", "SR_ID", "CATEGORY_NAME", "CREATIONDATE", "CLOSINGDATE", "DUE_DATE",
         "IS_QUICK_TASK", "REOPEN_COUNT", "REOPENING_COUNT", "N_REOPEN", "NB_REOPEN",
         "NUMBER_OF_REOPENINGS", "IS_REOPENED", "REOPEN_DATE",
+        "PRIORITY_ID", "STATUS_ID", "JUR_DESK_ID", "JUR_ASSIGNEDGROUP_ID",
+        "ACTNUMBER", "TASK_NUMBER", "SRNUMBER",
     )
     try:
         df = load_parquet(path, columns=activity_columns)
@@ -1526,6 +1712,9 @@ def render_activity_tab(path: str):
             st.info("Chart unavailable: column `IS_QUICK_TASK` is missing or empty.")
         else:
             st.plotly_chart(plot_activity_quick_tasks(top_quick), use_container_width=True)
+
+    st.divider()
+    render_activity_ticket_board(df_f, sla_quantile=sla_quantile, resolution_base=base_resolution)
 
     st.divider()
 
@@ -1812,9 +2001,32 @@ with st.sidebar:
         value="activity_routing_network.html",
     )
 
-tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
+view_options = ["SR", "Activity", "Handoffs & History SR"]
+active_view = st.radio(
+    "Window",
+    options=view_options,
+    index=0,
+    horizontal=True,
+    key="active_view",
+)
+previous_view = st.session_state.get("_previous_view")
+if previous_view is None:
+    st.session_state["_previous_view"] = active_view
+elif previous_view != active_view:
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.session_state["_previous_view"] = active_view
+    st.session_state["load_sr_data"] = False
+    st.session_state["load_activity_data"] = False
+    st.session_state["load_handoff_data"] = False
+    st.session_state["_cache_switch_notice"] = f"Cache auto-cleared after switching from `{previous_view}` to `{active_view}`."
+    st.rerun()
 
-with tab_sr:
+if "_cache_switch_notice" in st.session_state:
+    st.caption(st.session_state["_cache_switch_notice"])
+    del st.session_state["_cache_switch_notice"]
+
+if active_view == "SR":
     load_sr = st.toggle(
         "Load SR data",
         value=False,
@@ -1830,7 +2042,7 @@ with tab_sr:
             st.error(f"Runtime error in `SR`: {exc}")
             st.code(traceback.format_exc())
 
-with tab_activity:
+elif active_view == "Activity":
     load_activity = st.toggle(
         "Load Activity data",
         value=False,
@@ -1846,7 +2058,7 @@ with tab_activity:
             st.error(f"Runtime error in `Activity`: {exc}")
             st.code(traceback.format_exc())
 
-with tab_handoff_history:
+else:
     load_handoff = st.toggle(
         "Load Handoffs & History data",
         value=False,
