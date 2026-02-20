@@ -34,11 +34,11 @@ _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
 _IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
 _CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
 _CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "200000"))
-_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
-_CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "200000"))
-_CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "200000"))
-_CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "200000"))
-_CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "100000"))
+_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "50000"))
+_CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "50000"))
+_CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "15000"))
+_CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "15000"))
+_CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "30000"))
 
 _DEFAULT_SR_PATH = "https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link"
 _DEFAULT_ACTIVITY_PATH = "https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link"
@@ -258,6 +258,31 @@ def read_text_head(path: Path, max_bytes: int = 4096) -> str:
         return ""
 
 
+def extract_drive_confirm_token(page_text: str) -> str | None:
+    if not page_text:
+        return None
+    patterns = [
+        r"confirm=([0-9A-Za-z_\-]+)&amp;id=",
+        r"confirm=([0-9A-Za-z_\-]+)&id=",
+        r'"confirm":"([0-9A-Za-z_\-]+)"',
+        r"name=\"confirm\" value=\"([0-9A-Za-z_\-]+)\"",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, page_text)
+        if match:
+            return match.group(1)
+    return None
+
+
+def download_to_file(session: requests.Session, url: str, target: Path):
+    with session.get(url, stream=True, timeout=300, allow_redirects=True) as resp:
+        resp.raise_for_status()
+        with target.open("wb") as fh:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    fh.write(chunk)
+
+
 def localize_data_source(path: str, suffix: str = "") -> str:
     src = normalize_data_source(path)
     if not src.startswith(("http://", "https://")):
@@ -277,24 +302,33 @@ def localize_data_source(path: str, suffix: str = "") -> str:
 
     last_error: Exception | None = None
     session = requests.Session()
+    file_id = extract_drive_file_id(path)
     for candidate in drive_download_candidates(path):
         try:
-            with session.get(candidate, stream=True, timeout=300, allow_redirects=True) as resp:
-                resp.raise_for_status()
-                with local_path.open("wb") as fh:
-                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                        if chunk:
-                            fh.write(chunk)
+            download_to_file(session, candidate, local_path)
 
             if suffix == ".parquet" and not is_valid_parquet_file(local_path):
                 txt_head = read_text_head(local_path)
+                confirm_token = extract_drive_confirm_token(txt_head) if file_id else None
                 local_path.unlink(missing_ok=True)
+                if confirm_token and file_id:
+                    confirm_url = f"https://drive.google.com/uc?export=download&confirm={confirm_token}&id={file_id}"
+                    download_to_file(session, confirm_url, local_path)
+                    if is_valid_parquet_file(local_path):
+                        return str(local_path)
+                    txt_head = read_text_head(local_path)
+                    local_path.unlink(missing_ok=True)
                 if "google" in txt_head and ("access" in txt_head or "permission" in txt_head):
                     raise ValueError(
                         "Downloaded Google Drive content is not a parquet file. "
                         "Make sure the file is shared as 'Anyone with the link'."
                     )
-                raise ValueError("Downloaded content is not a valid parquet file.")
+                if "google" in txt_head and "too many users" in txt_head:
+                    raise ValueError(
+                        "Google Drive temporarily blocks this file ('too many users'). "
+                        "Retry later or duplicate file to your own Drive and share publicly."
+                    )
+                raise ValueError("Downloaded content is not a valid parquet file (Drive returned HTML or another file type).")
             return str(local_path)
         except Exception as exc:
             last_error = exc
@@ -480,7 +514,8 @@ def prepare_handoff_data(
 def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     import pyarrow.parquet as pq
 
-    pf = pq.ParquetFile(path)
+    src = localize_data_source(path, suffix=".parquet")
+    pf = pq.ParquetFile(src)
     field_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
     weekly_field_counts: dict[tuple[pd.Timestamp, str], int] = {}
