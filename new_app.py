@@ -1783,8 +1783,7 @@ def render_handoffs_history_tab(
 if Path(_BANNER_PATH).exists() and not _IS_STREAMLIT_CLOUD:
     st.image(_BANNER_PATH, width="stretch")
 
-st.title("BNP Paribas Operations Intelligence Dashboard")
-st.caption("SLA breach prediction powered by quantile regression · Activity, SR, handoffs & history analytics")
+st.title("BNP Paribas Head Of Operations Dashboard")
 
 with st.sidebar:
     st.header("SR Data")
