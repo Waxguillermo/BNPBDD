@@ -163,8 +163,7 @@ def resolve_on_time_metric(
     return pd.Series(np.nan, index=df.index, dtype=float), None
 
 
-@st.cache_data(show_spinner=False)
-def load_parquet(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
+def _load_parquet_impl(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
     import pyarrow.parquet as pq
 
     pf = pq.ParquetFile(path)
@@ -196,6 +195,15 @@ def load_parquet(path: str, columns: tuple[str, ...] | None = None, max_rows: in
         if remaining <= 0:
             break
     return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=selected)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def load_parquet(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
+    return _load_parquet_impl(path, columns=columns, max_rows=max_rows)
+
+
+def load_parquet_uncached(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
+    return _load_parquet_impl(path, columns=columns, max_rows=max_rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -764,7 +772,7 @@ def attach_reopen_columns(
 
     load_cols = tuple([key_col] + reopen_cols)
     try:
-        extra_df = load_parquet(parquet_path, columns=load_cols, max_rows=max_rows)
+        extra_df = load_parquet_uncached(parquet_path, columns=load_cols, max_rows=max_rows)
     except Exception:
         return base_df
 
@@ -1118,7 +1126,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     )
     try:
         sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
-        df = load_parquet(path, columns=sr_columns, max_rows=sr_max_rows)
+        df = load_parquet_uncached(path, columns=sr_columns, max_rows=sr_max_rows)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
         return
@@ -1217,7 +1225,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             st.caption("KPI source fallback: " + " · ".join(sources))
 
     st.divider()
-    chart_df = df_f
+    chart_cols = [c for c in ["ID", "SR_ID", "CREATIONDATE", "CLOSINGDATE", "CATEGORY_NAME", "OVERDUE_FLAG_ASOF"] if c in df_f.columns]
+    chart_df = df_f[chart_cols]
     left, right = st.columns([2, 1])
     with left:
         ts = weekly_ts(chart_df, clip_q=clip_q)
@@ -1264,7 +1273,22 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             )
             st.plotly_chart(fig4, use_container_width=True)
 
-        reopen_df = chart_df
+        reopen_cols = [
+            c
+            for c in [
+                "ID",
+                "SR_ID",
+                "REOPEN_COUNT",
+                "REOPENING_COUNT",
+                "N_REOPEN",
+                "NB_REOPEN",
+                "NUMBER_OF_REOPENINGS",
+                "IS_REOPENED",
+                "REOPEN_DATE",
+            ]
+            if c in df_f.columns
+        ]
+        reopen_df = df_f[reopen_cols] if reopen_cols else chart_df
         reopen_dist, reopen_source = reopen_distribution(reopen_df)
         if reopen_dist.empty:
             reopen_df = attach_reopen_columns(
