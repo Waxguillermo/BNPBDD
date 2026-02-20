@@ -987,13 +987,17 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         "IS_REOPENED", "REOPEN_DATE",
     )
     try:
-        df = load_parquet(path, columns=sr_columns)
+        sr_max_rows = 10000 if _IS_STREAMLIT_CLOUD else None
+        df = load_parquet(path, columns=sr_columns, max_rows=sr_max_rows)
     except FileNotFoundError:
         st.error(f"File not found: `{path}`")
         return
     except Exception as exc:
         st.error(f"Cannot load `{path}`: {exc}")
         return
+
+    if _IS_STREAMLIT_CLOUD:
+        st.caption(f"Cloud safe sampling enabled for SR view ({len(df):,} rows loaded).")
 
     for col in ["CREATIONDATE", "CLOSINGDATE"]:
         if col in df.columns:
@@ -1008,23 +1012,23 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     col_a, col_b, col_c, col_d = st.columns(4)
 
     with col_a:
-        cat_vals = sorted(df["CATEGORY_NAME"].dropna().astype(str).unique().tolist()) if "CATEGORY_NAME" in df.columns else []
+        cat_vals = sorted(df["CATEGORY_NAME"].dropna().astype(str).unique().tolist())[:200] if "CATEGORY_NAME" in df.columns else []
         cat_sel = st.multiselect("Category", cat_vals, default=[], key="sr_category")
     with col_b:
         if "PRIORITY_ID" in df.columns:
-            prio_vals = sorted(pd.to_numeric(df["PRIORITY_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+            prio_vals = sorted(pd.to_numeric(df["PRIORITY_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:100]
         else:
             prio_vals = []
         prio_sel = st.multiselect("Priority", prio_vals, default=[], key="sr_priority")
     with col_c:
         if "STATUS_ID" in df.columns:
-            status_vals = sorted(pd.to_numeric(df["STATUS_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+            status_vals = sorted(pd.to_numeric(df["STATUS_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:100]
         else:
             status_vals = []
         status_sel = st.multiselect("Status", status_vals, default=[], key="sr_status")
     with col_d:
         if "JUR_DESK_ID" in df.columns:
-            desk_vals = sorted(pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").dropna().astype(int).unique().tolist())
+            desk_vals = sorted(pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:200]
         else:
             desk_vals = []
         desk_sel = st.multiselect("Desk", desk_vals, default=[], key="sr_desk")
