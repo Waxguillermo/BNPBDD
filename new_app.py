@@ -708,6 +708,62 @@ def reopen_distribution(df: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
     return dist, source
 
 
+def attach_reopen_columns(
+    base_df: pd.DataFrame,
+    parquet_path: str,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    reopen_cols = [
+        "REOPEN_COUNT",
+        "REOPENING_COUNT",
+        "N_REOPEN",
+        "NB_REOPEN",
+        "NUMBER_OF_REOPENINGS",
+        "IS_REOPENED",
+        "REOPEN_DATE",
+    ]
+    if any(col in base_df.columns for col in reopen_cols):
+        return base_df
+
+    key_col = "ID" if "ID" in base_df.columns else ("SR_ID" if "SR_ID" in base_df.columns else None)
+    if key_col is None:
+        return base_df
+
+    load_cols = tuple([key_col] + reopen_cols)
+    try:
+        extra_df = load_parquet(parquet_path, columns=load_cols, max_rows=max_rows)
+    except Exception:
+        return base_df
+
+    if extra_df.empty or key_col not in extra_df.columns:
+        return base_df
+
+    work = extra_df.copy()
+    work["_merge_key"] = pd.to_numeric(work[key_col], errors="coerce").astype("Int64")
+    work = work.dropna(subset=["_merge_key"])
+    if work.empty:
+        return base_df
+
+    agg_spec: dict[str, str] = {}
+    for col in reopen_cols:
+        if col not in work.columns:
+            continue
+        if col == "REOPEN_DATE":
+            work[col] = pd.to_datetime(work[col], errors="coerce")
+        else:
+            work[col] = pd.to_numeric(work[col], errors="coerce")
+        agg_spec[col] = "max"
+
+    if not agg_spec:
+        return base_df
+
+    reopen_agg = work.groupby("_merge_key", as_index=False).agg(agg_spec)
+    enriched = base_df.copy()
+    enriched["_merge_key"] = pd.to_numeric(enriched[key_col], errors="coerce").astype("Int64")
+    enriched = enriched.merge(reopen_agg, on="_merge_key", how="left")
+    return enriched.drop(columns=["_merge_key"])
+
+
 def activity_resolution_base(df: pd.DataFrame) -> pd.DataFrame:
     needed = ["CREATIONDATE", "CLOSINGDATE", "CATEGORY_NAME"]
     if not set(needed).issubset(df.columns):
@@ -1136,7 +1192,11 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 )
                 st.plotly_chart(fig4, use_container_width=True)
 
-            reopen_dist, reopen_source = reopen_distribution(chart_df)
+            reopen_df = chart_df
+            reopen_dist, reopen_source = reopen_distribution(reopen_df)
+            if reopen_dist.empty and sr_safe_mode:
+                reopen_df = attach_reopen_columns(reopen_df, path, max_rows=sr_max_rows)
+                reopen_dist, reopen_source = reopen_distribution(reopen_df)
             if not reopen_dist.empty:
                 fig5 = px.bar(
                     reopen_dist,
@@ -1152,6 +1212,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
                 fig5.update_yaxes(title="Ticket count")
                 fig5.update_layout(margin=dict(l=0, r=30, t=60, b=10))
                 st.plotly_chart(fig5, use_container_width=True)
+            elif sr_safe_mode:
+                st.caption("Ticket reopen distribution unavailable in sampled SR data.")
     else:
         st.caption("SR charts disabled. KPIs and sample rows remain available.")
             
