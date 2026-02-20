@@ -284,8 +284,11 @@ def extract_drive_confirm_token(page_text: str) -> str | None:
     patterns = [
         r"confirm=([0-9A-Za-z_\-]+)&amp;id=",
         r"confirm=([0-9A-Za-z_\-]+)&id=",
+        r"confirm=([0-9A-Za-z_\-]+)&amp;",
+        r"confirm=([0-9A-Za-z_\-]+)&",
         r'"confirm":"([0-9A-Za-z_\-]+)"',
         r"name=\"confirm\" value=\"([0-9A-Za-z_\-]+)\"",
+        r"value=\"([0-9A-Za-z_\-]+)\" name=\"confirm\"",
     ]
     for pattern in patterns:
         match = re.search(pattern, page_text)
@@ -328,16 +331,25 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
     ):
         return None
 
-    pairs = re.findall(
-        r"<input[^>]+name=['\"]([^'\"]+)['\"][^>]*value=['\"]([^'\"]*)['\"][^>]*>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if not pairs:
+    input_tags = re.findall(r"<input\b[^>]*>", text, flags=re.IGNORECASE)
+    if not input_tags:
         return None
 
     params: dict[str, str] = {}
-    for name, value in pairs:
+    for tag in input_tags:
+        # Parse attributes regardless of their order (name/value can appear in any order).
+        attrs = dict(
+            re.findall(
+                r"([A-Za-z_:][A-Za-z0-9_:\-]*)\s*=\s*['\"]([^'\"]*)['\"]",
+                tag,
+                flags=re.IGNORECASE,
+            )
+        )
+        attrs_l = {k.lower(): v for k, v in attrs.items()}
+        name = attrs_l.get("name")
+        value = attrs_l.get("value", "")
+        if not name:
+            continue
         if name in {"id", "export", "confirm", "uuid", "at", "authuser", "resourcekey"} and value:
             params[name] = value
     if file_id and "id" not in params:
