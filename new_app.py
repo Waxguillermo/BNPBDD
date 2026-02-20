@@ -1,10 +1,11 @@
 import os
 import hashlib
+import html
 import re
 import textwrap
 import traceback
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 os.makedirs("/tmp/mplconfig", exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
@@ -274,6 +275,62 @@ def extract_drive_confirm_token(page_text: str) -> str | None:
     return None
 
 
+def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> str | None:
+    if not page_text:
+        return None
+
+    text = html.unescape(page_text)
+    text = (
+        text.replace("\\u003d", "=")
+        .replace("\\u0026", "&")
+        .replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\/", "/")
+    )
+
+    for pattern in [
+        r"https://drive\.usercontent\.google\.com/download\?[^\s\"'<>]+",
+        r"https://drive\.google\.com/uc\?[^\s\"'<>]+",
+    ]:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(0)
+
+    action_match = re.search(r"<form[^>]+action=['\"]([^'\"]+)['\"][^>]*>", text, flags=re.IGNORECASE)
+    if not action_match:
+        return None
+    action = action_match.group(1)
+
+    if (
+        "drive.google.com" not in action
+        and "drive.usercontent.google.com" not in action
+        and not action.startswith("/")
+    ):
+        return None
+
+    pairs = re.findall(
+        r"<input[^>]+name=['\"]([^'\"]+)['\"][^>]*value=['\"]([^'\"]*)['\"][^>]*>",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not pairs:
+        return None
+
+    params: dict[str, str] = {}
+    for name, value in pairs:
+        if name in {"id", "export", "confirm", "uuid", "at", "authuser"} and value:
+            params[name] = value
+    if file_id and "id" not in params:
+        params["id"] = file_id
+    if not params:
+        return None
+
+    if action.startswith("/"):
+        action = urljoin("https://drive.google.com", action)
+    joiner = "&" if "?" in action else "?"
+    return f"{action}{joiner}{urlencode(params)}"
+
+
 def download_to_file(session: requests.Session, url: str, target: Path):
     with session.get(url, stream=True, timeout=300, allow_redirects=True) as resp:
         resp.raise_for_status()
@@ -308,15 +365,22 @@ def localize_data_source(path: str, suffix: str = "") -> str:
             download_to_file(session, candidate, local_path)
 
             if suffix == ".parquet" and not is_valid_parquet_file(local_path):
-                txt_head = read_text_head(local_path)
+                txt_head = read_text_head(local_path, max_bytes=256 * 1024)
+                followup_url = extract_drive_followup_url(txt_head, file_id=file_id)
                 confirm_token = extract_drive_confirm_token(txt_head) if file_id else None
                 local_path.unlink(missing_ok=True)
+                if followup_url:
+                    download_to_file(session, followup_url, local_path)
+                    if is_valid_parquet_file(local_path):
+                        return str(local_path)
+                    txt_head = read_text_head(local_path, max_bytes=256 * 1024)
+                    local_path.unlink(missing_ok=True)
                 if confirm_token and file_id:
                     confirm_url = f"https://drive.google.com/uc?export=download&confirm={confirm_token}&id={file_id}"
                     download_to_file(session, confirm_url, local_path)
                     if is_valid_parquet_file(local_path):
                         return str(local_path)
-                    txt_head = read_text_head(local_path)
+                    txt_head = read_text_head(local_path, max_bytes=256 * 1024)
                     local_path.unlink(missing_ok=True)
                 if "google" in txt_head and ("access" in txt_head or "permission" in txt_head):
                     raise ValueError(
