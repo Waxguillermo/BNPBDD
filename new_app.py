@@ -28,10 +28,10 @@ _COLOR_B = _BNP_MID
 _TEMPLATE = "bnp_white"
 _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
 _IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
-_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "30000"))
-_CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "150000"))
+_CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
+_CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "200000"))
 _CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
-_CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "30000"))
+_CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "200000"))
 _LARGE_FILE_SAFE_MB = int(os.getenv("LARGE_FILE_SAFE_MB", "200"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
@@ -129,6 +129,46 @@ def file_size_mb(path: str) -> float | None:
         return Path(path).stat().st_size / (1024 * 1024)
     except Exception:
         return None
+
+
+def coerce_binary_metric(series: pd.Series) -> pd.Series:
+    s = pd.Series(series)
+    n = pd.to_numeric(s, errors="coerce")
+    if n.notna().any():
+        return n
+
+    txt = s.astype(str).str.strip().str.lower()
+    out = pd.Series(np.nan, index=s.index, dtype=float)
+    true_vals = {"true", "t", "yes", "y", "oui", "1", "on time", "on-time", "ontime", "within sla", "met sla"}
+    false_vals = {"false", "f", "no", "n", "non", "0", "late", "outside sla", "breach", "breached"}
+    out.loc[txt.isin(true_vals)] = 1.0
+    out.loc[txt.isin(false_vals)] = 0.0
+    return out
+
+
+def resolve_on_time_metric(
+    df: pd.DataFrame,
+    flag_candidates: list[str],
+    delay_candidates: list[str],
+) -> tuple[pd.Series, str | None]:
+    for col in flag_candidates:
+        if col not in df.columns:
+            continue
+        s = coerce_binary_metric(df[col])
+        if s.notna().any():
+            return s, col
+
+    for col in delay_candidates:
+        if col not in df.columns:
+            continue
+        d = pd.to_numeric(df[col], errors="coerce")
+        if not d.notna().any():
+            continue
+        s = pd.Series(np.nan, index=d.index, dtype=float)
+        s.loc[d.notna()] = (d.loc[d.notna()] <= 0).astype(float)
+        return s, f"{col}<=0h"
+
+    return pd.Series(np.nan, index=df.index, dtype=float), None
 
 
 @st.cache_data(show_spinner=False)
@@ -1055,6 +1095,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         "ID", "SR_ID", "SRNUMBER", "CATEGORY_NAME", "PRIORITY_ID", "STATUS_ID", "JUR_DESK_ID",
         "CREATIONDATE", "CLOSINGDATE", "IS_CLOSED", "OVERDUE_FLAG_ASOF", "ACK_ON_TIME", "FR_ON_TIME",
         "DUE_DATE", "OVERDUE_DAYS_ASOF", "CLOSE_DELAY_D", "ACK_DELAY_H", "FR_DELAY_H",
+        "ACK_ONTIME", "FIRST_RESPONSE_ON_TIME", "FR_ONTIME", "IS_ACK_ON_TIME", "IS_FR_ON_TIME",
+        "ACK_SLA_MET", "FR_SLA_MET", "FIRST_RESPONSE_SLA_MET", "FIRST_RESPONSE_DELAY_H",
     )
     sr_columns_reopen = (
         "REOPEN_COUNT", "REOPENING_COUNT", "N_REOPEN", "NB_REOPEN", "NUMBER_OF_REOPENINGS",
@@ -1132,11 +1174,36 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         df_f["IS_CLOSED"] = df_f["CLOSINGDATE"].notna().astype(float)
 
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+    ack_rate, ack_source = resolve_on_time_metric(
+        df_f,
+        flag_candidates=["ACK_ON_TIME", "ACK_ONTIME", "IS_ACK_ON_TIME", "ACK_SLA_MET"],
+        delay_candidates=["ACK_DELAY_H"],
+    )
+    fr_rate, fr_source = resolve_on_time_metric(
+        df_f,
+        flag_candidates=[
+            "FR_ON_TIME",
+            "FIRST_RESPONSE_ON_TIME",
+            "FR_ONTIME",
+            "IS_FR_ON_TIME",
+            "FR_SLA_MET",
+            "FIRST_RESPONSE_SLA_MET",
+        ],
+        delay_candidates=["FR_DELAY_H", "FIRST_RESPONSE_DELAY_H"],
+    )
     kpi1.metric("Tickets", f"{len(df_f):,}".replace(",", " "))
     kpi2.metric("Closed rate", fmt_pct(safe_mean(df_f["IS_CLOSED"])))
     kpi3.metric("Overdue rate", fmt_pct(safe_mean(df_f["OVERDUE_FLAG_ASOF"])) if "OVERDUE_FLAG_ASOF" in df_f.columns else "n/a")
-    kpi4.metric("Ack on-time", fmt_pct(safe_mean(df_f["ACK_ON_TIME"])) if "ACK_ON_TIME" in df_f.columns else "n/a")
-    kpi5.metric("1st response on-time", fmt_pct(safe_mean(df_f["FR_ON_TIME"])) if "FR_ON_TIME" in df_f.columns else "n/a")
+    kpi4.metric("Ack on-time", fmt_pct(safe_mean(ack_rate)))
+    kpi5.metric("1st response on-time", fmt_pct(safe_mean(fr_rate)))
+    if (ack_source and ack_source != "ACK_ON_TIME") or (fr_source and fr_source != "FR_ON_TIME"):
+        sources = []
+        if ack_source and ack_source != "ACK_ON_TIME":
+            sources.append(f"ACK: {ack_source}")
+        if fr_source and fr_source != "FR_ON_TIME":
+            sources.append(f"FR: {fr_source}")
+        if sources:
+            st.caption("KPI source fallback: " + " · ".join(sources))
 
     show_sr_charts = st.toggle(
         "Show SR charts",
@@ -1146,7 +1213,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     )
     if show_sr_charts:
         st.divider()
-        chart_df = df_f.head(4000) if sr_safe_mode else df_f
+        chart_df = df_f.head(200000) if sr_safe_mode else df_f
         left, right = st.columns([2, 1])
         with left:
             ts = weekly_ts(chart_df, clip_q=clip_q)
