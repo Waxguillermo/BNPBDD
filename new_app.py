@@ -32,6 +32,8 @@ _CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
 _CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "200000"))
 _CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
 _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "200000"))
+_CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "200000"))
+_CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "200000"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -1185,12 +1187,13 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         mask &= pd.to_numeric(df["STATUS_ID"], errors="coerce").isin(status_sel)
     if desk_sel and "JUR_DESK_ID" in df.columns:
         mask &= pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").isin(desk_sel)
-    df_f = df.loc[mask].copy()
+    df_f = df.loc[mask]
+    del df
 
     if "IS_CLOSED" in df_f.columns:
-        df_f["IS_CLOSED"] = pd.to_numeric(df_f["IS_CLOSED"], errors="coerce")
+        is_closed_rate = pd.to_numeric(df_f["IS_CLOSED"], errors="coerce")
     else:
-        df_f["IS_CLOSED"] = df_f["CLOSINGDATE"].notna().astype(float)
+        is_closed_rate = df_f["CLOSINGDATE"].notna().astype(float)
 
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
     ack_rate, ack_source = resolve_on_time_metric(
@@ -1211,7 +1214,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         delay_candidates=["FR_DELAY_H", "FIRST_RESPONSE_DELAY_H"],
     )
     kpi1.metric("Tickets", f"{len(df_f):,}".replace(",", " "))
-    kpi2.metric("Closed rate", fmt_pct(safe_mean(df_f["IS_CLOSED"])))
+    kpi2.metric("Closed rate", fmt_pct(safe_mean(is_closed_rate)))
     kpi3.metric("Overdue rate", fmt_pct(safe_mean(df_f["OVERDUE_FLAG_ASOF"])) if "OVERDUE_FLAG_ASOF" in df_f.columns else "n/a")
     kpi4.metric("Ack on-time", fmt_pct(safe_mean(ack_rate)))
     kpi5.metric("1st response on-time", fmt_pct(safe_mean(fr_rate)))
@@ -1227,6 +1230,11 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     st.divider()
     chart_cols = [c for c in ["ID", "SR_ID", "CREATIONDATE", "CLOSINGDATE", "CATEGORY_NAME", "OVERDUE_FLAG_ASOF"] if c in df_f.columns]
     chart_df = df_f[chart_cols]
+    if _IS_STREAMLIT_CLOUD and len(chart_df) > _CLOUD_SR_CHART_MAX_ROWS:
+        chart_df = chart_df.sample(n=_CLOUD_SR_CHART_MAX_ROWS, random_state=42)
+        st.caption(
+            f"SR charts computed on a {len(chart_df):,} row sample to prevent cloud memory crash."
+        )
     left, right = st.columns([2, 1])
     with left:
         ts = weekly_ts(chart_df, clip_q=clip_q)
@@ -1289,6 +1297,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             if c in df_f.columns
         ]
         reopen_df = df_f[reopen_cols] if reopen_cols else chart_df
+        if _IS_STREAMLIT_CLOUD and len(reopen_df) > _CLOUD_SR_REOPEN_DIST_MAX_ROWS:
+            reopen_df = reopen_df.sample(n=_CLOUD_SR_REOPEN_DIST_MAX_ROWS, random_state=42)
         reopen_dist, reopen_source = reopen_distribution(reopen_df)
         if reopen_dist.empty:
             reopen_df = attach_reopen_columns(
