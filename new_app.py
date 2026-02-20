@@ -46,8 +46,8 @@ _LOCAL_SR_MAX_ROWS = int(os.getenv("LOCAL_SR_MAX_ROWS", "120000"))
 _LOCAL_SR_CHART_MAX_ROWS = int(os.getenv("LOCAL_SR_CHART_MAX_ROWS", "15000"))
 _LOCAL_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("LOCAL_SR_REOPEN_DIST_MAX_ROWS", "15000"))
 _LOCAL_FILTER_SOURCE_MAX_ROWS = int(os.getenv("LOCAL_FILTER_SOURCE_MAX_ROWS", "30000"))
-_LOCAL_HISTORY_MAX_EVENTS = int(os.getenv("LOCAL_HISTORY_MAX_EVENTS", "180000"))
-_LOCAL_HANDOFF_ACTIVITY_MAX_ROWS = int(os.getenv("LOCAL_HANDOFF_ACTIVITY_MAX_ROWS", "120000"))
+_LOCAL_HISTORY_MAX_EVENTS = int(os.getenv("LOCAL_HISTORY_MAX_EVENTS", "240000"))
+_LOCAL_HANDOFF_ACTIVITY_MAX_ROWS = int(os.getenv("LOCAL_HANDOFF_ACTIVITY_MAX_ROWS", "160000"))
 _HISTORY_BATCH_SIZE = int(os.getenv("HISTORY_BATCH_SIZE", "120000"))
 _SR_MAX_ROWS = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_MAX_ROWS
 _SR_CHART_MAX_ROWS = _CLOUD_SR_CHART_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_CHART_MAX_ROWS
@@ -119,6 +119,30 @@ st.markdown(
             background: var(--bnp-primary) !important;
             color: #ffffff !important;
             border-color: var(--bnp-primary) !important;
+        }}
+        /* Style the first radio widget as green "tabs" (dashboard tab selector). */
+        [data-testid="stRadio"]:first-of-type div[role="radiogroup"] {{
+            gap: 8px;
+        }}
+        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] {{
+            background: #e8f4f0;
+            border: 1px solid #d3e7e0;
+            border-radius: 10px;
+            padding: 6px 14px;
+        }}
+        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] > div:first-child {{
+            display: none;
+        }}
+        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"] p {{
+            color: var(--bnp-dark);
+            margin: 0;
+        }}
+        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"]:has(input:checked) {{
+            background: var(--bnp-primary);
+            border-color: var(--bnp-primary);
+        }}
+        [data-testid="stRadio"]:first-of-type label[data-baseweb="radio"]:has(input:checked) p {{
+            color: #ffffff !important;
         }}
         [data-testid="stExpander"] {{
             border: 1px solid #d3e7e0;
