@@ -1864,24 +1864,18 @@ def render_activity_tab(path: str):
         pts = (overdue_event or {}).get("selection", {}).get("points", [])
         if pts:
             selected_cat = pts[0].get("y")
-
-        detail_df = overdue_df[overdue_df["CATEGORY_NAME"] == selected_cat] if selected_cat else overdue_df
-        detail_label = f"Category: **{selected_cat}**" if selected_cat else f"All categories ({n_overdue} activities)"
-
-        detail_cols = [c for c in ["ID", "SR_ID", "CATEGORY_NAME", "CREATIONDATE", "due", "overdue_days"] if c in detail_df.columns]
-        detail_renamed = detail_df[detail_cols].rename(columns={
-            "CATEGORY_NAME": "Category",
-            "overdue_days": "Overdue (d)",
-            "CREATIONDATE": "Created on",
-            "due": "Due date",
-        })
-
-        st.markdown(f"##### Overdue activities — {detail_label}")
         if selected_cat:
-            nb = len(detail_renamed)
-            total_j = detail_df["overdue_days"].sum()
-            st.info(f"{nb} activity(ies) — {total_j:.0f} cumulative overdue days")
-        st.dataframe(detail_renamed.sort_values("Overdue (d)", ascending=False), width="stretch", hide_index=True)
+            detail_df = overdue_df[overdue_df["CATEGORY_NAME"] == selected_cat]
+            detail_cols = [c for c in ["ID", "SR_ID", "CATEGORY_NAME", "CREATIONDATE", "due", "overdue_days"] if c in detail_df.columns]
+            detail_renamed = detail_df[detail_cols].rename(columns={
+                "CATEGORY_NAME": "Category",
+                "overdue_days": "Overdue (d)",
+                "CREATIONDATE": "Created on",
+                "due": "Due date",
+            })
+            st.markdown(f"##### Overdue activities — Category: **{selected_cat}**")
+            st.info(f"{len(detail_renamed)} activity(ies) — {detail_df['overdue_days'].sum():.0f} cumulative overdue days")
+            st.dataframe(detail_renamed.sort_values("Overdue (d)", ascending=False), width="stretch", hide_index=True)
 
 
 def render_handoffs_history_tab(
