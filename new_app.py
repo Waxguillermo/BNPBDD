@@ -34,6 +34,7 @@ _CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "200000"))
 _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "200000"))
 _CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "200000"))
 _CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "200000"))
+_CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "100000"))
 
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
@@ -163,6 +164,24 @@ def resolve_on_time_metric(
         return s, f"{col}<=0h"
 
     return pd.Series(np.nan, index=df.index, dtype=float), None
+
+
+def option_values_str(df: pd.DataFrame, column: str, max_values: int = 200) -> list[str]:
+    if column not in df.columns:
+        return []
+    s = df[column].dropna().astype(str)
+    if s.empty:
+        return []
+    return sorted(s.unique().tolist())[:max_values]
+
+
+def option_values_int(df: pd.DataFrame, column: str, max_values: int = 200) -> list[int]:
+    if column not in df.columns:
+        return []
+    s = pd.to_numeric(df[column], errors="coerce").dropna()
+    if s.empty:
+        return []
+    return sorted(s.astype(int).unique().tolist())[:max_values]
 
 
 def _load_parquet_impl(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
@@ -1118,13 +1137,6 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         "FR_SLA_MET",
         "FIRST_RESPONSE_SLA_MET",
         "FIRST_RESPONSE_DELAY_H",
-        "REOPEN_COUNT",
-        "REOPENING_COUNT",
-        "N_REOPEN",
-        "NB_REOPEN",
-        "NUMBER_OF_REOPENINGS",
-        "IS_REOPENED",
-        "REOPEN_DATE",
     )
     try:
         sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
@@ -1141,9 +1153,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         st.warning("No SR rows could be loaded from this source.")
         return
 
-    for col in ["CREATIONDATE", "CLOSINGDATE"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
+    if "CREATIONDATE" in df.columns:
+        df["CREATIONDATE"] = pd.to_datetime(df["CREATIONDATE"], errors="coerce")
 
     if "CREATIONDATE" in df.columns:
         df = df[df["CREATIONDATE"] >= pd.Timestamp(f"{start_year}-01-01")]
@@ -1154,28 +1165,26 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         st.info("No SR rows available after applying the selected start year.")
         return
 
+    filter_source = df
+    if _IS_STREAMLIT_CLOUD and len(df) > _CLOUD_FILTER_SOURCE_MAX_ROWS:
+        filter_source = df.sample(n=_CLOUD_FILTER_SOURCE_MAX_ROWS, random_state=42)
+        st.caption(
+            f"Filter options built from a {len(filter_source):,} row sample for stability."
+        )
+
     col_a, col_b, col_c, col_d = st.columns(4)
 
     with col_a:
-        cat_vals = sorted(df["CATEGORY_NAME"].dropna().astype(str).unique().tolist())[:200] if "CATEGORY_NAME" in df.columns else []
+        cat_vals = option_values_str(filter_source, "CATEGORY_NAME", max_values=200)
         cat_sel = st.multiselect("Category", cat_vals, default=[], key="sr_category")
     with col_b:
-        if "PRIORITY_ID" in df.columns:
-            prio_vals = sorted(pd.to_numeric(df["PRIORITY_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:100]
-        else:
-            prio_vals = []
+        prio_vals = option_values_int(filter_source, "PRIORITY_ID", max_values=100)
         prio_sel = st.multiselect("Priority", prio_vals, default=[], key="sr_priority")
     with col_c:
-        if "STATUS_ID" in df.columns:
-            status_vals = sorted(pd.to_numeric(df["STATUS_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:100]
-        else:
-            status_vals = []
+        status_vals = option_values_int(filter_source, "STATUS_ID", max_values=100)
         status_sel = st.multiselect("Status", status_vals, default=[], key="sr_status")
     with col_d:
-        if "JUR_DESK_ID" in df.columns:
-            desk_vals = sorted(pd.to_numeric(df["JUR_DESK_ID"], errors="coerce").dropna().astype(int).unique().tolist())[:200]
-        else:
-            desk_vals = []
+        desk_vals = option_values_int(filter_source, "JUR_DESK_ID", max_values=200)
         desk_sel = st.multiselect("Desk", desk_vals, default=[], key="sr_desk")
 
     mask = pd.Series(True, index=df.index)
@@ -1193,6 +1202,8 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
     if "IS_CLOSED" in df_f.columns:
         is_closed_rate = pd.to_numeric(df_f["IS_CLOSED"], errors="coerce")
     else:
+        if "CLOSINGDATE" in df_f.columns:
+            df_f["CLOSINGDATE"] = pd.to_datetime(df_f["CLOSINGDATE"], errors="coerce")
         is_closed_rate = df_f["CLOSINGDATE"].notna().astype(float)
 
     kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
@@ -1244,6 +1255,9 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             )
         left, right = st.columns([2, 1])
         with left:
+            if "CLOSINGDATE" in chart_df.columns:
+                chart_df = chart_df.copy()
+                chart_df["CLOSINGDATE"] = pd.to_datetime(chart_df["CLOSINGDATE"], errors="coerce")
             ts = weekly_ts(chart_df, clip_q=clip_q)
             if ts.empty:
                 st.info("No weekly data to display.")
