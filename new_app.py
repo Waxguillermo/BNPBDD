@@ -40,6 +40,11 @@ _CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "200000"))
 _CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "200000"))
 _CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "100000"))
 
+_DEFAULT_SR_PATH = "https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link"
+_DEFAULT_ACTIVITY_PATH = "https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link"
+_DEFAULT_ACTIVITY_GRAPH_PATH = "https://drive.google.com/file/d/1FumhWE4zTzOBLzS2U8pABB3JZZOlR52z/view?usp=drive_link"
+_DEFAULT_HISTORY_SR_PATH = "https://drive.google.com/file/d/1v5aJ6cFN-0-UnkJLm9hkERLVKqyWN5TW/view?usp=drive_link"
+
 pio.templates[_TEMPLATE] = go.layout.Template(
     layout=go.Layout(
         colorway=[_BNP_PRIMARY, _BNP_MID, _BNP_SOFT, _BNP_DARK, "#8ac8b4", "#b8ddd0"],
@@ -2062,7 +2067,7 @@ with st.sidebar:
     st.caption("You can use a local path or a public URL (Google Drive share link supported).")
     sr_path = st.text_input(
         "Path to sr_enriched.parquet",
-        value=os.getenv("SR_PATH", "sr_enriched.parquet"),
+        value=os.getenv("SR_PATH", _DEFAULT_SR_PATH),
     )
 
     st.header("SR Filters")
@@ -2073,47 +2078,24 @@ with st.sidebar:
     st.header("Handoffs & History Data")
     activity_path = st.text_input(
         "Path to activity.parquet",
-        value=os.getenv("ACTIVITY_PATH", "activity.parquet"),
+        value=os.getenv("ACTIVITY_PATH", _DEFAULT_ACTIVITY_PATH),
     )
     activity_graph_path = st.text_input(
         "Path to Activity_Jan_to_Sept_graph.parquet",
-        value=os.getenv("ACTIVITY_GRAPH_PATH", "Activity_Jan_to_Sept_graph.parquet"),
+        value=os.getenv("ACTIVITY_GRAPH_PATH", _DEFAULT_ACTIVITY_GRAPH_PATH),
     )
     history_sr_path = st.text_input(
         "Path to History_SR_Jan_to_Sept.parquet",
-        value=os.getenv("HISTORY_SR_PATH", "History_SR_Jan_to_Sept.parquet"),
+        value=os.getenv("HISTORY_SR_PATH", _DEFAULT_HISTORY_SR_PATH),
     )
     network_html_path = st.text_input(
         "Path to routing network HTML",
         value=os.getenv("ROUTING_HTML_PATH", "activity_routing_network.html"),
     )
 
-view_options = ["SR", "Activity", "Handoffs & History SR"]
-active_view = st.radio(
-    "Window",
-    options=view_options,
-    index=0,
-    horizontal=True,
-    key="active_view",
-)
-previous_view = st.session_state.get("_previous_view")
-if previous_view is None:
-    st.session_state["_previous_view"] = active_view
-elif previous_view != active_view:
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    st.session_state["_previous_view"] = active_view
-    st.session_state["load_sr_data"] = False
-    st.session_state["load_activity_data"] = False
-    st.session_state["load_handoff_data"] = False
-    st.session_state["_cache_switch_notice"] = f"Cache auto-cleared after switching from `{previous_view}` to `{active_view}`."
-    st.rerun()
+tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
 
-if "_cache_switch_notice" in st.session_state:
-    st.caption(st.session_state["_cache_switch_notice"])
-    del st.session_state["_cache_switch_notice"]
-
-if active_view == "SR":
+with tab_sr:
     load_sr = st.toggle(
         "Load SR data",
         value=False,
@@ -2129,7 +2111,7 @@ if active_view == "SR":
             st.error(f"Runtime error in `SR`: {exc}")
             st.code(traceback.format_exc())
 
-elif active_view == "Activity":
+with tab_activity:
     load_activity = st.toggle(
         "Load Activity data",
         value=False,
@@ -2145,7 +2127,7 @@ elif active_view == "Activity":
             st.error(f"Runtime error in `Activity`: {exc}")
             st.code(traceback.format_exc())
 
-else:
+with tab_handoff_history:
     load_handoff = st.toggle(
         "Load Handoffs & History data",
         value=False,
