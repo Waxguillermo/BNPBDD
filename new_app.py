@@ -35,7 +35,7 @@ _BANNER_PATH = "BNP-Paribas-bureaux.jpg"
 _IS_STREAMLIT_CLOUD = os.getenv("HOME") == "/home/adminuser"
 _CLOUD_MAX_ROWS = int(os.getenv("CLOUD_MAX_ROWS", "200000"))
 _CLOUD_HISTORY_MAX_EVENTS = int(os.getenv("CLOUD_HISTORY_MAX_EVENTS", "200000"))
-_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "50000"))
+_CLOUD_SR_MAX_ROWS = int(os.getenv("CLOUD_SR_MAX_ROWS", "20000"))
 _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "50000"))
 _CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "15000"))
 _CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "15000"))
@@ -254,7 +254,7 @@ def read_text_head(path: Path, max_bytes: int = 4096) -> str:
     try:
         with path.open("rb") as fh:
             blob = fh.read(max_bytes)
-        return blob.decode("utf-8", errors="ignore").lower()
+        return blob.decode("utf-8", errors="ignore")
     except Exception:
         return ""
 
@@ -292,7 +292,7 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
         r"https://drive\.usercontent\.google\.com/download\?[^\s\"'<>]+",
         r"https://drive\.google\.com/uc\?[^\s\"'<>]+",
     ]:
-        match = re.search(pattern, text)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             return match.group(0)
 
@@ -301,9 +301,10 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
         return None
     action = action_match.group(1)
 
+    action_l = action.lower()
     if (
-        "drive.google.com" not in action
-        and "drive.usercontent.google.com" not in action
+        "drive.google.com" not in action_l
+        and "drive.usercontent.google.com" not in action_l
         and not action.startswith("/")
     ):
         return None
@@ -329,6 +330,13 @@ def extract_drive_followup_url(page_text: str, file_id: str | None = None) -> st
         action = urljoin("https://drive.google.com", action)
     joiner = "&" if "?" in action else "?"
     return f"{action}{joiner}{urlencode(params)}"
+
+
+def extract_drive_cookie_confirm_token(session: requests.Session) -> str | None:
+    for name, value in session.cookies.items():
+        if name.startswith("download_warning") and value:
+            return str(value)
+    return None
 
 
 def download_to_file(session: requests.Session, url: str, target: Path):
@@ -359,6 +367,15 @@ def localize_data_source(path: str, suffix: str = "") -> str:
 
     last_error: Exception | None = None
     session = requests.Session()
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            )
+        }
+    )
     file_id = extract_drive_file_id(path)
     for candidate in drive_download_candidates(path):
         try:
@@ -368,13 +385,20 @@ def localize_data_source(path: str, suffix: str = "") -> str:
                 txt_head = read_text_head(local_path, max_bytes=256 * 1024)
                 followup_url = extract_drive_followup_url(txt_head, file_id=file_id)
                 confirm_token = extract_drive_confirm_token(txt_head) if file_id else None
+                cookie_token = extract_drive_cookie_confirm_token(session) if file_id else None
                 local_path.unlink(missing_ok=True)
                 if followup_url:
                     download_to_file(session, followup_url, local_path)
                     if is_valid_parquet_file(local_path):
                         return str(local_path)
                     txt_head = read_text_head(local_path, max_bytes=256 * 1024)
+                    if not confirm_token:
+                        confirm_token = extract_drive_confirm_token(txt_head) if file_id else None
+                    if not cookie_token:
+                        cookie_token = extract_drive_cookie_confirm_token(session) if file_id else None
                     local_path.unlink(missing_ok=True)
+                if not confirm_token:
+                    confirm_token = cookie_token
                 if confirm_token and file_id:
                     confirm_url = f"https://drive.google.com/uc?export=download&confirm={confirm_token}&id={file_id}"
                     download_to_file(session, confirm_url, local_path)
@@ -382,12 +406,13 @@ def localize_data_source(path: str, suffix: str = "") -> str:
                         return str(local_path)
                     txt_head = read_text_head(local_path, max_bytes=256 * 1024)
                     local_path.unlink(missing_ok=True)
-                if "google" in txt_head and ("access" in txt_head or "permission" in txt_head):
+                txt_head_l = txt_head.lower()
+                if "google" in txt_head_l and ("access" in txt_head_l or "permission" in txt_head_l):
                     raise ValueError(
                         "Downloaded Google Drive content is not a parquet file. "
                         "Make sure the file is shared as 'Anyone with the link'."
                     )
-                if "google" in txt_head and "too many users" in txt_head:
+                if "google" in txt_head_l and "too many users" in txt_head_l:
                     raise ValueError(
                         "Google Drive temporarily blocks this file ('too many users'). "
                         "Retry later or duplicate file to your own Drive and share publicly."
@@ -424,9 +449,10 @@ def _load_parquet_impl(path: str, columns: tuple[str, ...] | None = None, max_ro
 
     remaining = max(int(row_cap), 1)
     chunks: list[pd.DataFrame] = []
+    batch_size = min(5_000, remaining) if _IS_STREAMLIT_CLOUD else min(20_000, remaining)
     for batch in pf.iter_batches(
         columns=selected,
-        batch_size=min(20_000, remaining),
+        batch_size=batch_size,
         use_threads=False,
     ):
         chunk = batch.to_pandas(use_threads=False)
@@ -1546,15 +1572,31 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
         "FIRST_RESPONSE_SLA_MET",
         "FIRST_RESPONSE_DELAY_H",
     )
-    try:
-        sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
-        df = load_parquet_uncached(path, columns=sr_columns, max_rows=sr_max_rows)
-    except FileNotFoundError:
-        st.error(f"File not found: `{path}`")
+    sr_max_rows = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else None
+    df = pd.DataFrame()
+    last_exc: Exception | None = None
+    load_caps = [sr_max_rows]
+    if _IS_STREAMLIT_CLOUD:
+        load_caps = [sr_max_rows, 10_000, 5_000]
+    seen_caps: set[int | None] = set()
+    for cap in load_caps:
+        if cap in seen_caps:
+            continue
+        seen_caps.add(cap)
+        try:
+            df = load_parquet_uncached(path, columns=sr_columns, max_rows=cap)
+            sr_max_rows = cap
+            break
+        except FileNotFoundError:
+            st.error(f"File not found: `{path}`")
+            return
+        except Exception as exc:
+            last_exc = exc
+    if df.empty and last_exc is not None:
+        st.error(f"Cannot load `{path}`: {last_exc}")
         return
-    except Exception as exc:
-        st.error(f"Cannot load `{path}`: {exc}")
-        return
+    if _IS_STREAMLIT_CLOUD and sr_max_rows is not None:
+        st.caption(f"Cloud safe load cap: {sr_max_rows:,} rows")
 
     st.caption(f"Loaded SR rows: {len(df):,}")
     if df.empty:
@@ -1729,7 +1771,7 @@ def render_sr_tab(path: str, start_year: int, clip_q: float | None):
             if _IS_STREAMLIT_CLOUD and len(reopen_df) > _CLOUD_SR_REOPEN_DIST_MAX_ROWS:
                 reopen_df = reopen_df.sample(n=_CLOUD_SR_REOPEN_DIST_MAX_ROWS, random_state=42)
             reopen_dist, reopen_source = reopen_distribution(reopen_df)
-            if reopen_dist.empty:
+            if reopen_dist.empty and not _IS_STREAMLIT_CLOUD:
                 reopen_df = attach_reopen_columns(
                     reopen_df,
                     path,
