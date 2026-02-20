@@ -1,7 +1,10 @@
 import os
+import hashlib
+import re
 import textwrap
 import traceback
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 os.makedirs("/tmp/mplconfig", exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
@@ -12,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -184,10 +188,87 @@ def option_values_int(df: pd.DataFrame, column: str, max_values: int = 200) -> l
     return sorted(s.astype(int).unique().tolist())[:max_values]
 
 
+def normalize_data_source(path: str) -> str:
+    raw = str(path).strip()
+    if not raw:
+        return raw
+    if "drive.google.com" not in raw:
+        return raw
+
+    parsed = urlparse(raw)
+    file_id = None
+    match = re.search(r"/file/d/([^/]+)", parsed.path)
+    if match:
+        file_id = match.group(1)
+    else:
+        query = parse_qs(parsed.query)
+        file_id = query.get("id", [None])[0]
+    if not file_id:
+        return raw
+    return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+
+def extract_drive_file_id(path: str) -> str | None:
+    raw = str(path).strip()
+    if "drive.google.com" not in raw:
+        return None
+    parsed = urlparse(raw)
+    match = re.search(r"/file/d/([^/]+)", parsed.path)
+    if match:
+        return match.group(1)
+    query = parse_qs(parsed.query)
+    return query.get("id", [None])[0]
+
+
+def drive_download_candidates(path: str) -> list[str]:
+    file_id = extract_drive_file_id(path)
+    if not file_id:
+        return [normalize_data_source(path)]
+    return [
+        f"https://drive.google.com/uc?export=download&id={file_id}",
+        f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t",
+    ]
+
+
+def localize_data_source(path: str, suffix: str = "") -> str:
+    src = normalize_data_source(path)
+    if not src.startswith(("http://", "https://")):
+        return src
+
+    cache_dir = Path("/tmp/bnp_data_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(src.encode("utf-8")).hexdigest()[:24]
+    ext = suffix or Path(urlparse(src).path).suffix or ".bin"
+    local_path = cache_dir / f"{digest}{ext}"
+
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return str(local_path)
+
+    last_error: Exception | None = None
+    for candidate in drive_download_candidates(path):
+        try:
+            with requests.get(candidate, stream=True, timeout=300) as resp:
+                resp.raise_for_status()
+                with local_path.open("wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            fh.write(chunk)
+            return str(local_path)
+        except Exception as exc:
+            last_error = exc
+            if local_path.exists():
+                local_path.unlink(missing_ok=True)
+
+    if last_error is not None:
+        raise last_error
+    return str(local_path)
+
+
 def _load_parquet_impl(path: str, columns: tuple[str, ...] | None = None, max_rows: int | None = None) -> pd.DataFrame:
     import pyarrow.parquet as pq
 
-    pf = pq.ParquetFile(path)
+    src = localize_data_source(path, suffix=".parquet")
+    pf = pq.ParquetFile(src)
     selected = None
     if columns:
         available = set(pf.schema.names)
@@ -199,7 +280,7 @@ def _load_parquet_impl(path: str, columns: tuple[str, ...] | None = None, max_ro
         row_cap = _CLOUD_MAX_ROWS
 
     if row_cap is None:
-        return pd.read_parquet(path, columns=selected)
+        return pd.read_parquet(src, columns=selected)
 
     remaining = max(int(row_cap), 1)
     chunks: list[pd.DataFrame] = []
@@ -229,12 +310,14 @@ def load_parquet_uncached(path: str, columns: tuple[str, ...] | None = None, max
 
 @st.cache_data(show_spinner=False)
 def load_html(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    src = localize_data_source(path, suffix=".html")
+    return Path(src).read_text(encoding="utf-8")
 
 
 @st.cache_data(show_spinner=False)
 def load_sr_overdue_map(path: str) -> pd.DataFrame:
-    base = pd.read_parquet(path, columns=["ID", "OVERDUE_FLAG_ASOF"])
+    src = localize_data_source(path, suffix=".parquet")
+    base = pd.read_parquet(src, columns=["ID", "OVERDUE_FLAG_ASOF"])
     base["ID"] = pd.to_numeric(base["ID"], errors="coerce").astype("Int64")
     base["OVERDUE_FLAG_ASOF"] = pd.to_numeric(base["OVERDUE_FLAG_ASOF"], errors="coerce")
     base = base.dropna(subset=["ID"])
@@ -1976,7 +2059,11 @@ st.title("BNP Paribas Head Of Operations Dashboard")
 
 with st.sidebar:
     st.header("SR Data")
-    sr_path = st.text_input("Path to sr_enriched.parquet", value="sr_enriched.parquet")
+    st.caption("You can use a local path or a public URL (Google Drive share link supported).")
+    sr_path = st.text_input(
+        "Path to sr_enriched.parquet",
+        value=os.getenv("SR_PATH", "sr_enriched.parquet"),
+    )
 
     st.header("SR Filters")
     start_year = st.selectbox("Start from year", options=[2024, 2025, 2026], index=0)
@@ -1986,19 +2073,19 @@ with st.sidebar:
     st.header("Handoffs & History Data")
     activity_path = st.text_input(
         "Path to activity.parquet",
-        value="activity.parquet",
+        value=os.getenv("ACTIVITY_PATH", "activity.parquet"),
     )
     activity_graph_path = st.text_input(
         "Path to Activity_Jan_to_Sept_graph.parquet",
-        value="Activity_Jan_to_Sept_graph.parquet",
+        value=os.getenv("ACTIVITY_GRAPH_PATH", "Activity_Jan_to_Sept_graph.parquet"),
     )
     history_sr_path = st.text_input(
         "Path to History_SR_Jan_to_Sept.parquet",
-        value="History_SR_Jan_to_Sept.parquet",
+        value=os.getenv("HISTORY_SR_PATH", "History_SR_Jan_to_Sept.parquet"),
     )
     network_html_path = st.text_input(
         "Path to routing network HTML",
-        value="activity_routing_network.html",
+        value=os.getenv("ROUTING_HTML_PATH", "activity_routing_network.html"),
     )
 
 view_options = ["SR", "Activity", "Handoffs & History SR"]
