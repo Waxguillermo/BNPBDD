@@ -41,20 +41,28 @@ _CLOUD_SR_REOPEN_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_MAX_ROWS", "50000"))
 _CLOUD_SR_CHART_MAX_ROWS = int(os.getenv("CLOUD_SR_CHART_MAX_ROWS", "15000"))
 _CLOUD_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("CLOUD_SR_REOPEN_DIST_MAX_ROWS", "15000"))
 _CLOUD_FILTER_SOURCE_MAX_ROWS = int(os.getenv("CLOUD_FILTER_SOURCE_MAX_ROWS", "30000"))
+_CLOUD_HANDOFF_ACTIVITY_MAX_ROWS = int(os.getenv("CLOUD_HANDOFF_ACTIVITY_MAX_ROWS", "80000"))
 _LOCAL_SR_MAX_ROWS = int(os.getenv("LOCAL_SR_MAX_ROWS", "120000"))
 _LOCAL_SR_CHART_MAX_ROWS = int(os.getenv("LOCAL_SR_CHART_MAX_ROWS", "15000"))
 _LOCAL_SR_REOPEN_DIST_MAX_ROWS = int(os.getenv("LOCAL_SR_REOPEN_DIST_MAX_ROWS", "15000"))
 _LOCAL_FILTER_SOURCE_MAX_ROWS = int(os.getenv("LOCAL_FILTER_SOURCE_MAX_ROWS", "30000"))
+_LOCAL_HISTORY_MAX_EVENTS = int(os.getenv("LOCAL_HISTORY_MAX_EVENTS", "180000"))
+_LOCAL_HANDOFF_ACTIVITY_MAX_ROWS = int(os.getenv("LOCAL_HANDOFF_ACTIVITY_MAX_ROWS", "120000"))
+_HISTORY_BATCH_SIZE = int(os.getenv("HISTORY_BATCH_SIZE", "120000"))
 _SR_MAX_ROWS = _CLOUD_SR_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_MAX_ROWS
 _SR_CHART_MAX_ROWS = _CLOUD_SR_CHART_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_CHART_MAX_ROWS
 _SR_REOPEN_DIST_MAX_ROWS = (
     _CLOUD_SR_REOPEN_DIST_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_SR_REOPEN_DIST_MAX_ROWS
 )
 _FILTER_SOURCE_MAX_ROWS = _CLOUD_FILTER_SOURCE_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_FILTER_SOURCE_MAX_ROWS
+_HISTORY_MAX_EVENTS = _CLOUD_HISTORY_MAX_EVENTS if _IS_STREAMLIT_CLOUD else _LOCAL_HISTORY_MAX_EVENTS
+_HANDOFF_ACTIVITY_MAX_ROWS = (
+    _CLOUD_HANDOFF_ACTIVITY_MAX_ROWS if _IS_STREAMLIT_CLOUD else _LOCAL_HANDOFF_ACTIVITY_MAX_ROWS
+)
 
 _DEFAULT_SR_PATH = "https://drive.google.com/file/d/1jaImWvFC_7pTpEWv0_A6GT-kD2x0jKW3/view?usp=drive_link"
 _DEFAULT_ACTIVITY_PATH = "https://drive.google.com/file/d/1Ng4dQ3E5UfRd8DYt99PwuXbbew0h2MNx/view?usp=drive_link"
-_DEFAULT_ACTIVITY_GRAPH_PATH = "https://drive.google.com/file/d/1FumhWE4zTzOBLzS2U8pABB3JZZOlR52z/view?usp=drive_link"
+_DEFAULT_ACTIVITY_GRAPH_PATH = _DEFAULT_ACTIVITY_PATH
 _DEFAULT_HISTORY_SR_PATH = "https://drive.google.com/file/d/1v5aJ6cFN-0-UnkJLm9hkERLVKqyWN5TW/view?usp=drive_link"
 
 pio.templates[_TEMPLATE] = go.layout.Template(
@@ -681,7 +689,10 @@ def prepare_handoff_data(
 
 
 @st.cache_data(show_spinner=False)
-def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+def history_summary(
+    path: str,
+    max_events: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     import pyarrow.parquet as pq
 
     src = localize_data_source(path, suffix=".parquet")
@@ -694,8 +705,9 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
     total_events = 0
     assign_related = 0
 
-    history_limit = _CLOUD_HISTORY_MAX_EVENTS if _IS_STREAMLIT_CLOUD else None
-    for batch in pf.iter_batches(columns=["FIELD", "ACTION", "SR_ID", "ACTION_DATE"], batch_size=500_000):
+    history_limit = max_events if max_events is not None else _HISTORY_MAX_EVENTS
+    batch_size = max(min(_HISTORY_BATCH_SIZE, history_limit) if history_limit else _HISTORY_BATCH_SIZE, 10_000)
+    for batch in pf.iter_batches(columns=["FIELD", "ACTION", "SR_ID", "ACTION_DATE"], batch_size=batch_size):
         block = batch.to_pandas()
         total_events += len(block)
         if history_limit is not None and total_events > history_limit:
@@ -752,6 +764,7 @@ def history_summary(path: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
 
         sr_vals = sr_series.dropna().astype("int64").unique().tolist()
         sr_seen.update(sr_vals)
+        del block
         if history_limit is not None and total_events >= history_limit:
             break
 
@@ -2118,11 +2131,24 @@ def render_handoffs_history_tab(
             "to avoid memory crashes."
         )
     
-
+    handoff_cols = (
+        "ID",
+        "SR_ID",
+        "JUR_ASSIGNEDGROUP_ID",
+        "JUR_DESK_ID",
+        "CREATIONDATE",
+        "ACCEPTED_DATE",
+        "UPDATE_DATE",
+        "CLOSINGDATE",
+    )
     activity_df = pd.DataFrame()
     activity_source_used = activity_graph_path
     try:
-        activity_df = load_parquet(activity_graph_path)
+        activity_df = load_parquet(
+            activity_graph_path,
+            columns=handoff_cols,
+            max_rows=_HANDOFF_ACTIVITY_MAX_ROWS,
+        )
     except Exception as graph_exc:
         can_try_fallback = (
             activity_fallback_path is not None
@@ -2131,9 +2157,13 @@ def render_handoffs_history_tab(
         )
         if can_try_fallback:
             try:
-                activity_df = load_parquet(activity_fallback_path)
+                activity_df = load_parquet(
+                    activity_fallback_path,
+                    columns=handoff_cols,
+                    max_rows=_HANDOFF_ACTIVITY_MAX_ROWS,
+                )
                 activity_source_used = activity_fallback_path
-                st.warning(
+                st.info(
                     "Primary handoff source is unavailable. "
                     f"Falling back to activity source: `{activity_fallback_path}`"
                 )
@@ -2155,7 +2185,10 @@ def render_handoffs_history_tab(
             else:
                 st.error(f"Cannot load `{activity_graph_path}`: {graph_exc}")
             return
-    st.caption(f"Handoff activity source: `{activity_source_used}`")
+    st.caption(
+        f"Handoff activity source: `{activity_source_used}` · "
+        f"rows loaded: {len(activity_df):,} (cap {_HANDOFF_ACTIVITY_MAX_ROWS:,})"
+    )
 
     sr_overdue_map = pd.DataFrame()
     overdue_available = False
@@ -2188,7 +2221,14 @@ def render_handoffs_history_tab(
     if not _IS_STREAMLIT_CLOUD:
         try:
             with st.spinner("Computing History SR aggregates..."):
-                fields_df, actions_df, weekly_df, reopen_df, hist_metrics = history_summary(history_sr_path)
+                fields_df, actions_df, weekly_df, reopen_df, hist_metrics = history_summary(
+                    history_sr_path,
+                    max_events=_HISTORY_MAX_EVENTS,
+                )
+                st.caption(
+                    f"History SR safe cap: {hist_metrics['total_events']:,} events "
+                    f"(max {_HISTORY_MAX_EVENTS:,})"
+                )
         except FileNotFoundError:
             st.error(f"File not found: `{history_sr_path}`")
             return
