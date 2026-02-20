@@ -1742,7 +1742,7 @@ def render_handoffs_history_tab(
             st.plotly_chart(fig_actions, use_container_width=True)
 
 
-if Path(_BANNER_PATH).exists():
+if Path(_BANNER_PATH).exists() and not _IS_STREAMLIT_CLOUD:
     st.image(_BANNER_PATH, width="stretch")
 
 st.title("BNP Paribas Operations Intelligence Dashboard")
