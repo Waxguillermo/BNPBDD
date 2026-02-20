@@ -1,6 +1,7 @@
 import os
 import hashlib
 import html
+import gc
 import re
 import textwrap
 import traceback
@@ -2381,10 +2382,32 @@ with st.sidebar:
         "Path to routing network HTML",
         value=os.getenv("ROUTING_HTML_PATH", "activity_routing_network.html"),
     )
+    st.header("Performance")
+    auto_clear_cache_on_tab_switch = st.toggle(
+        "Auto clear cache on tab switch",
+        value=True,
+        key="auto_clear_cache_on_tab_switch",
+        help="Clears Streamlit cache when switching dashboard tab to reduce memory pressure.",
+    )
 
-tab_sr, tab_activity, tab_handoff_history = st.tabs(["SR", "Activity", "Handoffs & History SR"])
+selected_tab = st.radio(
+    "Dashboard tab",
+    options=["SR", "Activity", "Handoffs & History SR"],
+    horizontal=True,
+    key="dashboard_tab",
+)
 
-with tab_sr:
+prev_tab = st.session_state.get("_previous_dashboard_tab")
+if prev_tab is None:
+    st.session_state["_previous_dashboard_tab"] = selected_tab
+elif prev_tab != selected_tab:
+    if auto_clear_cache_on_tab_switch:
+        st.cache_data.clear()
+        gc.collect()
+        st.info(f"Cache cleared after tab switch: `{prev_tab}` -> `{selected_tab}`")
+    st.session_state["_previous_dashboard_tab"] = selected_tab
+
+if selected_tab == "SR":
     load_sr = st.toggle(
         "Load SR data",
         value=False,
@@ -2400,7 +2423,7 @@ with tab_sr:
             st.error(f"Runtime error in `SR`: {exc}")
             st.code(traceback.format_exc())
 
-with tab_activity:
+elif selected_tab == "Activity":
     load_activity = st.toggle(
         "Load Activity data",
         value=False,
@@ -2416,7 +2439,7 @@ with tab_activity:
             st.error(f"Runtime error in `Activity`: {exc}")
             st.code(traceback.format_exc())
 
-with tab_handoff_history:
+else:
     load_handoff = st.toggle(
         "Load Handoffs & History data",
         value=False,
